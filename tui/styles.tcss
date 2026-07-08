@@ -1,0 +1,107 @@
+/* mini-openclaw TUI 样式表 */
+
+Screen {
+    background: $surface;
+}
+
+/* 状态栏 */
+StatusBar {
+    dock: top;
+    height: 1;
+    background: $panel;
+    color: $text;
+    padding: 0 1;
+}
+
+/* 对话容器 */
+ChatContainer {
+    overflow-y: scroll;
+    overflow-x: auto;
+    border: solid $primary;
+    margin: 0 1;
+}
+
+MessageList {
+    height: auto;
+}
+
+/* 用户消息 */
+UserMessage {
+    background: $surface;
+    border: solid $primary;
+    margin: 1 0;
+    padding: 0 1;
+}
+
+/* 助手消息 */
+AssistantMessage {
+    background: $surface-darken-1;
+    border: solid $secondary;
+    margin: 1 0;
+    padding: 0 1;
+}
+
+/* 输入框 */
+PromptInput {
+    dock: bottom;
+    height: 5;
+    border: solid $primary;
+    margin: 0 1 1 1;
+}
+
+PromptInput:focus {
+    border: solid $accent;
+}
+
+/* 工具调用卡片 */
+ToolCallCard {
+    margin: 0 2 1 2;
+    border: solid $secondary 30%;
+}
+
+ToolCallCard > Vertical > Static {
+    margin: 0 1;
+}
+
+ToolCallCard #result-content {
+    background: $surface;
+    padding: 0 1;
+    border: dashed $secondary 20%;
+}
+
+/* 权限弹窗 */
+PermissionModal {
+    align: center middle;
+}
+
+#perm-dialog {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    background: $surface;
+    border: thick $warning;
+}
+
+#perm-title {
+    text-align: center;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#perm-args {
+    margin: 1 0;
+}
+
+#perm-warning {
+    color: $error;
+    margin: 1 0;
+}
+
+#perm-buttons {
+    align: center middle;
+    margin-top: 1;
+}
+
+#perm-buttons Button {
+    margin: 0 1;
+}
