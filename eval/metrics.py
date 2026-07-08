@@ -1,19 +1,48 @@
-"""工具调用三项指标（Day6 Lab3 验收用）。
+"""工具调用三项指标（Day3 评测验收用）。
 
   - JSON 合法率：模型输出的 tool_call 能否被 json.loads 成功解析。
   - 工具选择正确率：选对工具名的比例。
   - 参数正确率：关键参数与期望一致的比例。
 """
 from __future__ import annotations
-import json
+import json,re
 from typing import Any
 
+TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+
+# 一条记录 = 一次任务运行留下的轨迹。steps 里每步含：模型这步请求的
+# tool_calls、原始文本 raw（含 <tool_call>）、以及该步的 token 计数。
+SAMPLE_RECORDS: list[dict[str, Any]] = [
+    {"task": "read-config",
+     "steps": [
+         {"tool_calls": [{"name": "read", "arguments": {"path": "config.json"}}],
+          "raw": '<tool_call>{"name":"read","arguments":{"path":"config.json"}}</tool_call>',
+          "prompt_tokens": 310, "completion_tokens": 22},
+     ],
+     "final": "config.json 里 timeout = 30 秒。"},
+    {"task": "list-dir",
+     "steps": [
+         {"tool_calls": [{"name": "bash", "arguments": {"command": "ls"}}],
+          "raw": '<tool_call>{"name":"bash","arguments":{"command":"ls"}}</tool_call>',
+          "prompt_tokens": 290, "completion_tokens": 18},
+     ],
+     "final": "当前目录有：main.py config.json README.md"},
+    {"task": "read-config",          # 一条“失败/低质量”样本：JSON 被截断，且没报出值
+     "steps": [
+         {"tool_calls": [],
+          "raw": '<tool_call>{"name":"read","arguments":{"path":',   # 坏 JSON
+          "prompt_tokens": 305, "completion_tokens": 12},
+         {"tool_calls": [], "raw": "我不确定 timeout 的值。",
+          "prompt_tokens": 340, "completion_tokens": 15},
+     ],
+     "final": "我不确定 timeout 的值。"},
+]
 
 def json_valid_rate(raw_outputs: list[str]) -> float:
     """raw_outputs：模型为每条用例生成的 <tool_call>{...}</tool_call> 原文。"""
     ok = 0
     for out in raw_outputs:
-        # TODO[Day7] 抽出 {...} 部分尝试 json.loads（可复用 prompt.render.parse_tool_calls）
+        # TODO[Day3] 抽出 {...} 部分尝试 json.loads（可复用 prompt.render.parse_tool_calls）
         try:
             json.loads(_extract_json(out)); ok += 1
         except Exception:  # noqa
@@ -37,6 +66,64 @@ def arg_accuracy(preds: list[dict], expected_args: list[dict]) -> float:
 
 
 def _extract_json(text: str) -> str:
-    # TODO[Day7] 从 <tool_call>...</tool_call> 中取出 JSON 串
-    start, end = text.find("{"), text.rfind("}")
-    return text[start:end + 1] if start >= 0 else "{}"
+    """从文本中提取第一个 { ... } 子串，若找不到则返回空字符串。"""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or start > end:
+        return ""   # 无有效 JSON 结构
+    return text[start:end + 1]
+
+
+def success_rate(tasks: list, records: list[dict]) -> float:
+    """对每条 (task, trajectory) 记录跑 task.check，返回成功比例。"""
+    by_name = {t.name: t for t in tasks}
+    ok = 0
+    for r in records:
+        task = by_name.get(r["task"])
+        if task and task.check(r):      # 复用步骤 1 的成功判据
+            ok += 1
+    return ok / max(len(records), 1)
+
+def step_count(record: dict) -> int:
+    return len(record["steps"])
+
+def token_count(record: dict) -> int:
+    return sum(s.get("prompt_tokens", 0) + s.get("completion_tokens", 0)
+               for s in record["steps"])
+
+def json_valid_rate(records: list[dict]) -> float:
+    """从每步的 raw 中提取 JSON 串并校验合法性。"""
+    total, ok = 0, 0
+    for r in records:
+        for s in r["steps"]:
+            raw = s.get("raw", "")
+            if "<tool_call>" not in raw:
+                continue                # 这步没调工具，不计入
+            total += 1
+            # 尝试提取完整的 <tool_call>...</tool_call>
+            m = TOOL_CALL_RE.search(raw)
+            if m:
+                json_str = m.group(1)
+            else:
+                # 没有闭合标签，则取第一个 { 到末尾
+                start = raw.find("{")
+                if start != -1:
+                    json_str = raw[start:]
+                else:
+                    json_str = ""
+            if json_str:
+                try:
+                    json.loads(json_str)
+                    ok += 1
+                except json.JSONDecodeError:
+                    pass                # 非法 JSON，不计入 ok
+            # 如果 json_str 为空，也不计入 ok（但通常不会发生）
+    return ok / max(total, 1)
+
+if __name__ == "__main__":
+    from eval.tasks import SAMPLE_TASKS
+    recs = SAMPLE_RECORDS
+    print("成功率        :", success_rate(SAMPLE_TASKS, recs))
+    print("平均步数      :", sum(step_count(r) for r in recs) / len(recs))
+    print("平均 token    :", sum(token_count(r) for r in recs) / len(recs))
+    print("JSON 合法率   :", json_valid_rate(recs))
