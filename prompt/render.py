@@ -17,39 +17,82 @@ import json
 # 不同模型的对话模板不同（ChatML / Llama / GLM）。这里以 GLM 风格为例占位。
 # TODO[Day3] 校对你所用模型的真实特殊标记！拼错一个 token，模型行为就会跑偏。
 ROLE_TOKENS = {
-    "system": "<|system|>",
-    "user": "<|user|>",
-    "assistant": "<|assistant|>",
-    "tool": "<|observation|>",
+    "system": "<|im_start|>system\n",
+    "user": "<|im_start|>user\n",
+    "assistant": "<|im_start|>assistant\n",
+    "tool": "<|im_start|>tool\n",
 }
 
 
 def render_tools_block(tools: list[dict[str, Any]]) -> str:
     """把 tool schema 列表渲染成放进 system 段的文本说明。"""
-    # TODO[Day3] 设计一个清晰的工具说明格式，并约定模型用
-    #   <tool_call>{"name": ..., "arguments": {...}}</tool_call> 来调用。
     if not tools:
         return ""
-    lines = ["你可以调用以下工具，调用格式：<tool_call>{\"name\": ..., \"arguments\": {...}}</tool_call>"]
+    lines = [
+        "You have access to the following tools. To call a tool, output exactly:",
+        '<tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>',
+        "where 'arguments' is a JSON object with the required parameters.",
+        "",
+        "Available tools:"
+    ]
     for t in tools:
         f = t["function"]
-        lines.append(f"- {f['name']}: {f['description']}  参数schema={json.dumps(f['parameters'], ensure_ascii=False)}")
+        lines.append(f"- {f['name']}: {f['description']}")
+        lines.append(f"  Parameters schema: {json.dumps(f['parameters'], ensure_ascii=False)}")
     return "\n".join(lines)
 
 
 def render_prompt(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> str:
-    """messages + tools -> 一整段送入模型的文本。
+    """使用 ChatML 模板拼接 messages + tools -> 整段文本"""
+    parts = []
+    
+    # 1. 构建 system 内容（包含工具说明）
+    system_content = ""
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_content = msg.get("content", "")
+            break
+    # 如果有 tools，附加工具说明
+    if tools:
+        tools_block = render_tools_block(tools)
+        if system_content:
+            system_content += "\n\n" + tools_block
+        else:
+            system_content = tools_block
+    # 如果 system_content 不为空，以 ChatML 格式添加
+    if system_content:
+        parts.append(f"<|im_start|>system\n{system_content}<|im_end|>")
+    
+    # 2. 添加其他消息（跳过已处理的 system）
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "system":
+            continue  # 已处理
+        if role in ("user", "assistant", "tool"):
+            parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+        else:
+            # 未知角色，当作普通文本
+            parts.append(f"<|im_start|>user\n{content}<|im_end|>")
+    
+    # 3. 末尾加上 assistant 起始标记，提示模型开始生成
+    parts.append("<|im_start|>assistant\n")
+    
+    return "\n".join(parts)
 
-    这是 Day3 的提交物。下面是骨架，请按你所用模型的模板补全。
-    """
-    parts: list[str] = []
-    # TODO[Day3] 把 tools 说明并入 system 段
-    # TODO[Day3] 逐条 message 用 ROLE_TOKENS 包裹拼接
-    # TODO[Day3] 末尾以 assistant 起始标记结尾，提示模型开始生成
-    raise NotImplementedError("Day3：实现 render_prompt")
 
+import re,json
+
+import re, json
 
 def parse_tool_calls(text: str) -> list[dict[str, Any]]:
-    """从模型生成的文本里解析出工具调用（手动解析，不依赖 API）。"""
-    # TODO[Day3] 用正则/状态机提取所有 <tool_call>...</tool_call>，json.loads 出 name/arguments
-    raise NotImplementedError("Day3：实现 parse_tool_calls")
+    calls = []
+    for m in re.finditer(r"<tool_call>(.*?)</tool_call>", text, re.DOTALL):
+        raw = m.group(1).strip()
+        try:
+            obj = json.loads(raw)
+            calls.append({"name": obj.get("name"),
+                          "arguments": obj.get("arguments", {})})
+        except json.JSONDecodeError:
+            continue   # 容错：JSON 不合法就跳过这一段
+    return calls
