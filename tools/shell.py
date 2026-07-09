@@ -3,10 +3,24 @@ from __future__ import annotations
 from .base import Tool
 
 
-def _bash(command: str, timeout: int = 30) -> str:
-    # TODO[Day5] subprocess 执行，捕获 stdout/stderr/returncode，超时保护
-    # TODO[Day10] 接入权限层 + 沙箱（bwrap/firejail/docker），危险命令需确认
-    raise NotImplementedError("Day5：实现 bash")
+import subprocess
+
+def _bash(command: str = "", timeout: int = 30) -> str:
+    if not command:
+        return "[错误] bash 缺少必需参数 command"
+    try:
+        p = subprocess.run(
+            command, shell=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return f"[超时] 命令超过 {timeout}s 未结束：{command}"
+    out = p.stdout or ""
+    if p.stderr:
+        out += f"\n[stderr]\n{p.stderr}"
+    if p.returncode != 0:
+        out += f"\n[returncode={p.returncode}]"
+    return out.strip() or "[无输出]"
 
 
 bash_tool = Tool(
