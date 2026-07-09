@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 import argparse
+import os
 import sys
 
 from tools.base import build_default_registry
@@ -51,6 +52,35 @@ def main(argv: list[str] | None = None) -> int:
     # 真正跑任务：优先用 DeepSeek API；没配 key 时回退到 FakeBackend（离线打通管道）
     from agent.loop import AgentLoop
     reg = build_default_registry()
+    from mcp.client import MCPClient, register_mcp_tools
+    # 1) Echo server（MCP 测试用）
+    try:
+        mcp_echo = MCPClient(["python", "mcp/echo_server.py"], name="echo")
+        mcp_echo.start()
+        register_mcp_tools(reg, mcp_echo)
+    except Exception as e:  # noqa
+        print(f"[提示] MCP echo server 未接入（{e}）。")
+
+    # 2) 官方 filesystem server（通过 npx），配 MCP_FS_DIR 环境变量指定允许的目录
+    fs_dir = os.environ.get("MCP_FS_DIR", ".")
+    try:
+        mcp_fs = MCPClient(
+            ["npx", "-y", "@modelcontextprotocol/server-filesystem", fs_dir],
+            name="filesystem",
+        )
+        mcp_fs.start()
+        register_mcp_tools(reg, mcp_fs)
+        print(f"[MCP] filesystem server 已接入（允许目录：{fs_dir}）")
+    except Exception as e:  # noqa
+        # npx 或 Node 不可用时，退到自写 calc server
+        print(f"[提示] filesystem server 未接入（{e}），尝试 calc server...")
+        try:
+            mcp_calc = MCPClient(["python", "mcp/calc_server.py"], name="calc")
+            mcp_calc.start()
+            register_mcp_tools(reg, mcp_calc)
+            print("[MCP] calc server 已接入（add / multiply）")
+        except Exception as e2:  # noqa
+            print(f"[提示] calc server 也未接入（{e2}），仅用内置工具。")
     try:
         from backend.client import DeepSeekBackend
         backend = DeepSeekBackend()                       # 需要 DEEPSEEK_API_KEY
