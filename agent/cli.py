@@ -11,6 +11,7 @@ import sys
 
 from tools.base import build_default_registry
 from agent.prompts import SYSTEM_PROMPT
+from skills.loader import load_skills, skills_catalog, Skill
 
 
 def selfcheck() -> int:
@@ -38,6 +39,31 @@ def selfcheck() -> int:
     print("== 自检", "通过 ✅" if ok else "未通过 ❌", "==")
     print("\n下一步：按 dayNN 的 lab-guide 填 # TODO 标记。")
     return 0 if ok else 1
+
+
+def _match_skills(task: str, skills: list[Skill]) -> list[Skill]:
+    """按需召回：任务命中某 skill 的 description 或 name 中的关键词时返回这些 skill。"""
+    task_lower = task.lower()
+    matched: list[Skill] = []
+    for s in skills:
+        full_keywords: set[str] = set()   # full-token matches (strong signal)
+        cjk_grams: set[str] = set()       # 2-gram substrings (auxiliary, short CJK tokens only)
+        for field in (s.name, s.description):
+            for token in field.lower().replace("-", " ").replace("_", " ").split():
+                t = token.strip(",.，。!！?？:：;；()（）[]【】""''""、/")
+                if len(t) >= 2:
+                    full_keywords.add(t)
+                    # Only extract 2-grams from short CJK tokens (< 8 chars);
+                    # long CJK strings (whole sentences) otherwise generate too many common substrings
+                    if len(t) < 8 and any("一" <= c <= "鿿" for c in t):
+                        for i in range(len(t) - 1):
+                            cjk_grams.add(t[i:i + 2])
+        # Require at least one strong full-token match; 2-grams alone are not enough
+        has_full = any(kw in task_lower for kw in full_keywords)
+        has_cjk_gram = any(g in task_lower for g in cjk_grams)
+        if has_full or has_cjk_gram:
+            matched.append(s)
+    return matched
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,7 +114,15 @@ def main(argv: list[str] | None = None) -> int:
         from backend.fake_backend import FakeBackend
         print(f"[提示] 未启用真后端（{e}），回退 FakeBackend。配置 DEEPSEEK_API_KEY 后即用真模型。")
         backend = FakeBackend()
-    agent = AgentLoop(backend, reg, SYSTEM_PROMPT)
+    # --- Skill 按需注入（Day9 Step 2）---
+    skills = load_skills()
+    system = SYSTEM_PROMPT + "\n\n# 可用 Skills（按名称/描述匹配后激活流程）\n" + skills_catalog(skills)
+    matched = _match_skills(args.task, skills)
+    if matched:
+        bodies = "\n\n---\n\n".join(f"## Skill: {s.name}\n{s.body}" for s in matched)
+        system += "\n\n# 当前任务激活的 Skill 流程\n" + bodies
+
+    agent = AgentLoop(backend, reg, system)
     print(agent.run(args.task))
     return 0
 
