@@ -11,6 +11,30 @@ import sys
 
 from tools.base import build_default_registry
 from agent.prompts import SYSTEM_PROMPT
+from skills.loader import load_skills, match_skills, skills_catalog
+
+
+def build_system_prompt(task: str, skills) -> tuple[str, list[str]]:
+    """Build the hybrid Skill catalog and preload high-confidence matches."""
+    matched = match_skills(task, skills)
+    matched_names = sorted(skill.name for skill in matched)
+    system = SYSTEM_PROMPT + "\n\n# 可用 Skills（混合按需加载）\n" + skills_catalog(skills)
+    if matched:
+        bodies = "\n\n---\n\n".join(
+            f"## Skill: {skill.name}\n{skill.body}" for skill in matched
+        )
+        system += (
+            "\n\n# 当前任务已预加载的 Skills\n"
+            + ", ".join(matched_names)
+            + "\n这些 Skill 的正文已在下方提供，不要再次调用 read 读取对应 instructions。\n\n"
+            + bodies
+        )
+    else:
+        system += (
+            "\n\n当前任务未预加载 Skill。若后续确认某个 Skill 相关，先调用 read 完整读取其 "
+            "instructions 路径，再按正文执行。"
+        )
+    return system, matched_names
 
 
 def selfcheck() -> int:
@@ -119,16 +143,9 @@ def main(argv: list[str] | None = None) -> int:
         from backend.fake_backend import FakeBackend
         print(f"[提示] 未启用真后端（{e}），回退 FakeBackend。配置 DEEPSEEK_API_KEY 后即用真模型。")
         backend = FakeBackend()
-
-    from skills.loader import load_skills, skills_catalog
     skills = load_skills()
-    system = (
-        SYSTEM_PROMPT
-        + "\n\n# 可用 Skills（按需加载）\n"
-        + "当用户任务与某个 Skill 的描述匹配时，必须先调用 read 工具完整读取其 "
-          "instructions 路径，再按正文流程执行。未命中时不要读取 Skill。\n"
-        + skills_catalog(skills)
-    )
+    system, _matched_names = build_system_prompt(args.task or "", skills)
+
     agent = AgentLoop(backend, reg, system)
     try:
         print(agent.run(user_task))

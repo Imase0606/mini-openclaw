@@ -54,3 +54,20 @@ def skills_catalog(skills: list[Skill]) -> str:
         f"- {s.name}: {s.description}\n  instructions: {s.path.as_posix()}"
         for s in skills
     )
+
+
+def match_skills(task: str, skills: list[Skill]) -> list[Skill]:
+    """Return skills whose explicit trigger terms occur in the user task."""
+    task_lower = task.lower()
+    matched: list[Skill] = []
+    for skill in skills:
+        terms = {
+            token.strip(",.，。!！?？:：;；()（）[]【】'\"、/")
+            for field in (skill.name, skill.description)
+            for token in field.lower().replace("-", " ").replace("_", " ").split()
+        }
+        terms.discard("")
+        strong_terms = {term for term in terms if len(term) >= 2}
+        if any(term in task_lower for term in strong_terms):
+            matched.append(skill)
+    return matched
