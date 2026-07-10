@@ -9,5 +9,12 @@ markdownify>=0.13    # web_fetch: HTML -> markdown
 # --- Day8 MCP（可选，最小客户端可不依赖官方 SDK）---
 # mcp>=1.0           # 官方 SDK，做对照时再装
 
+# --- 视频知识库工具（按需安装）---
+yt-dlp>=2025.6.30    # B站公开视频元数据、字幕、音频/视频流提取
+# opencc-python-reimplemented>=0.1.7  # 繁体中文转简体中文（可选，但推荐）
+# faster-whisper>=1.1.0  # 无字幕视频的本地 ASR 转写（CPU 可跑，首次会下载模型）
+# easyocr>=1.7.2         # 关键帧 OCR；依赖 torch，按演示机器条件安装
+# 系统依赖：ffmpeg（抽音频/关键帧），需加入 PATH
+
 # 说明：本课程大脑走 DeepSeek API，不本地部署模型、不做 LoRA，故无需 vllm/peft/torch 等重依赖。
 # （Day2 的 nanoGPT 实验请用单独的 conda 环境安装 torch，避免污染 agent 环境。）

@@ -27,7 +27,7 @@ class AgentWorker:
         backend: Any,
         registry: ToolRegistry,
         system_prompt: str,
-        max_turns: int = 20,
+        max_turns: int = 100,
     ) -> None:
         self.task = task
         self.backend = backend

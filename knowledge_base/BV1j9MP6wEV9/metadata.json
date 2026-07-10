@@ -1,0 +1,35 @@
+{
+  "platform": "bilibili",
+  "source_url": "https://www.bilibili.com/video/BV1j9MP6wEV9/",
+  "bvid": "BV1j9MP6wEV9",
+  "aid": 116861865887789,
+  "cid": 39651770864,
+  "title": "从零开始，学会让桌面Agent帮你干活！【小白教程】",
+  "description": "用不上codex的朋友们！新的国产Agent直接上手，来跑通8大用法～\n感谢朋友们的三连+关注～",
+  "author": "秋芝2046",
+  "author_mid": 385670211,
+  "duration": 793,
+  "duration_text": "13:13",
+  "published_at": "2026-07-05T10:00:00",
+  "pages": [
+    {
+      "cid": 39651770864,
+      "page": 1,
+      "part": "从零开始，学会让桌面Agent帮你干活！【小白教程】",
+      "duration": 793,
+      "duration_text": "13:13"
+    }
+  ],
+  "stats": {
+    "view": 1201170,
+    "like": 38986,
+    "coin": 2977,
+    "favorite": 22118,
+    "reply": 681,
+    "danmaku": 512,
+    "share": 1882
+  },
+  "cover": "http://i2.hdslb.com/bfs/archive/8dcd368630f3739d3fafdf16c6af67cd6d494ea5.jpg",
+  "fetched_at": "2026-07-10T11:10:01",
+  "normalize_warning": "未安装 opencc-python-reimplemented，未执行繁简转换。"
+}

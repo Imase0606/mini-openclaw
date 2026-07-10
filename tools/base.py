@@ -73,4 +73,14 @@ def build_default_registry() -> ToolRegistry:
     # TODO[Day7] 再加入：
     from .more_tools import web_fetch_tool
     reg.register(web_fetch_tool)
+    #
+    # 视频知识库工具：B站元数据 / 字幕与 ASR / 关键帧 OCR / Markdown 落盘
+    from .video import (
+        kb_write_tool,
+        video_frame_ocr_tool,
+        video_probe_tool,
+        video_transcribe_tool,
+    )
+    for t in (video_probe_tool, video_transcribe_tool, video_frame_ocr_tool, kb_write_tool):
+        reg.register(t)
     return reg
