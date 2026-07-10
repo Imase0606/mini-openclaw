@@ -29,8 +29,15 @@ class Skill:
 
 
 def parse_skill_md(text: str, path: Path) -> Skill:
-    # TODO[Day9] 解析 YAML frontmatter（name/description）+ 正文 body
-    raise NotImplementedError("Day9：解析 SKILL.md frontmatter")
+    import yaml
+    name = description = ""
+    body = text
+    if text.startswith("---"):
+        _, fm, body = text.split("---", 2)   # 头尾两个 --- 之间是 frontmatter
+        meta = yaml.safe_load(fm) or {}
+        name = meta.get("name", "")
+        description = meta.get("description", "")
+    return Skill(name=name, description=description, body=body.strip(), path=path)
 
 
 def load_skills(root: str = "skills") -> list[Skill]:
@@ -42,6 +49,8 @@ def load_skills(root: str = "skills") -> list[Skill]:
 
 
 def skills_catalog(skills: list[Skill]) -> str:
-    """生成给模型看的可用 skill 清单（name + description），用于按需召回。"""
-    # TODO[Day9] 渲染成一段文本，放进系统提示词
-    return "\n".join(f"- {s.name}: {s.description}" for s in skills)
+    """生成包含说明文件路径的 skill 清单，供模型按需读取。"""
+    return "\n".join(
+        f"- {s.name}: {s.description}\n  instructions: {s.path.as_posix()}"
+        for s in skills
+    )

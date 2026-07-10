@@ -15,6 +15,15 @@ class FakeBackend:
 
     def chat(self, messages: list[dict[str, Any]], tools: list[dict] | None = None) -> dict[str, Any]:
         last = messages[-1]["content"] if messages else ""
+        if isinstance(last, list) and any(
+            isinstance(block, dict) and block.get("type") == "image"
+            for block in last
+        ):
+            return {
+                "role": "assistant",
+                "content": "[FakeBackend] 已收到图像内容块；真实识图需要配置支持视觉的模型。",
+                "tool_calls": [],
+            }
         # 如果上一条是工具结果（observation），就给最终答复
         if messages and messages[-1].get("role") == "tool":
             return {"role": "assistant", "content": f"[FakeBackend] 已根据工具结果完成：{last[:60]}", "tool_calls": []}

@@ -21,15 +21,15 @@
     }
   ],
   "stats": {
-    "view": 1201170,
-    "like": 38986,
-    "coin": 2977,
-    "favorite": 22118,
-    "reply": 681,
-    "danmaku": 512,
-    "share": 1882
+    "view": 1202541,
+    "like": 39025,
+    "coin": 2999,
+    "favorite": 22166,
+    "reply": 688,
+    "danmaku": 517,
+    "share": 1901
   },
   "cover": "http://i2.hdslb.com/bfs/archive/8dcd368630f3739d3fafdf16c6af67cd6d494ea5.jpg",
-  "fetched_at": "2026-07-10T11:10:01",
+  "fetched_at": "2026-07-10T14:24:01",
   "normalize_warning": "未安装 opencc-python-reimplemented，未执行繁简转换。"
 }

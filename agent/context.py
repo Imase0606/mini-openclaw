@@ -11,15 +11,36 @@ from __future__ import annotations
 from typing import Any
 
 
+def _content_for_history(content: Any) -> str:
+    if not isinstance(content, list):
+        return str(content or "")
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            parts.append(str(block.get("text") or ""))
+        elif block.get("type") in {"image", "image_url"}:
+            parts.append("[image input]")
+    return "\n".join(parts)
+
+
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     """字符数 / 4 粗估 token 数，够用就行。"""
-    return sum(len(str(m.get("content", ""))) for m in messages) // 4
+    text_tokens = sum(len(_content_for_history(m.get("content"))) for m in messages) // 4
+    image_tokens = sum(
+        1000
+        for message in messages
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") in {"image", "image_url"}
+    )
+    return text_tokens + image_tokens
 
 
 def _summarize(backend, chunk: list[dict]) -> str:
     """调后端把一段对话历史压缩成要点备忘。"""
     text = "\n".join(
-        f"<{m['role']}>: {m.get('content', '')}" for m in chunk
+        f"<{m['role']}>: {_content_for_history(m.get('content'))}" for m in chunk
     )
     prompt = (
         "把下面一段对话历史压缩成一条「历史备忘」，保留三样东西：\n"

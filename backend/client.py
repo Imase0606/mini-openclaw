@@ -11,6 +11,9 @@ DeepSeek 的接口与 OpenAI 完全兼容，所以下面用通用的 OpenAI 协�
     DEEPSEEK_API_KEY   你的 key（千万别提交进 git！）
     DEEPSEEK_BASE_URL  默认 https://api.deepseek.com
     DEEPSEEK_MODEL     默认 deepseek-chat
+    VISION_API_KEY     CLI --image 使用的 OpenAI-compatible 视觉模型密钥
+    VISION_BASE_URL    视觉模型 API 根地址
+    VISION_MODEL       视觉模型名称
 """
 from __future__ import annotations
 import os
@@ -25,13 +28,16 @@ class DeepSeekBackend:
                  api_key: str | None = None,
                  base_url: str | None = None,
                  model: str | None = None,
-                 timeout: float = 60.0):
+                 timeout: float | None = None):
         self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
         self.base_url = (base_url or os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")).rstrip("/")
         self.model = model or os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
         if not self.api_key:
             raise RuntimeError("缺少 DEEPSEEK_API_KEY 环境变量")
-        self._client = httpx.Client(timeout=timeout)
+        request_timeout = timeout or float(os.environ.get("DEEPSEEK_TIMEOUT", "180"))
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(request_timeout, connect=min(20.0, request_timeout)),
+        )
 
     def chat(self, messages: list[dict[str, Any]], tools: list[dict] | None = None,
              temperature: float = 0.0) -> dict[str, Any]:
@@ -45,12 +51,23 @@ class DeepSeekBackend:
             payload["tools"] = tools           # OpenAI tools 格式，base.Tool.schema() 已生成
             payload["tool_choice"] = "auto"
 
+        has_images = any(self._content_has_image(message.get("content")) for message in messages)
         resp = self._client.post(
             f"{self.base_url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {self.api_key}"},
             json=payload,
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if has_images:
+                detail = resp.text[:1000]
+                raise RuntimeError(
+                    "视觉模型请求失败。请确认当前模型支持图像输入，或配置 "
+                    "VISION_API_KEY / VISION_BASE_URL / VISION_MODEL。"
+                    f" API 返回：{detail}"
+                ) from exc
+            raise
         msg = resp.json()["choices"][0]["message"]
         return self._normalize(msg)
 
@@ -67,8 +84,37 @@ class DeepSeekBackend:
                 out.append({"role": "assistant", "content": m.get("content") or None,
                             "tool_calls": self._to_openai_tool_calls(m["tool_calls"])})
             else:
-                out.append({"role": role, "content": m.get("content", "")})
+                out.append({"role": role, "content": self._to_openai_content(m.get("content", ""))})
         return out
+
+    @staticmethod
+    def _content_has_image(content: Any) -> bool:
+        return isinstance(content, list) and any(
+            isinstance(block, dict) and block.get("type") in {"image", "image_url"}
+            for block in content
+        )
+
+    @staticmethod
+    def _to_openai_content(content: Any) -> Any:
+        if not isinstance(content, list):
+            return content
+        converted: list[dict[str, Any]] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "image":
+                converted.append(block)
+                continue
+            source = block.get("source") or {}
+            if source.get("type") != "base64":
+                raise ValueError("仅支持 base64 图片内容块")
+            media_type = source.get("media_type") or "image/png"
+            data = source.get("data") or ""
+            converted.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{media_type};base64,{data}"},
+            })
+        return converted
 
     @staticmethod
     def _to_openai_tool_calls(calls: list[dict]) -> list[dict]:

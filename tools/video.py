@@ -26,6 +26,11 @@ def _extract_bvid(url: str) -> str:
     return match.group(1)
 
 
+def _canonical_video_url(bvid: str, page: int | None = None) -> str:
+    base = f"https://www.bilibili.com/video/{bvid}/"
+    return f"{base}?p={page}" if page is not None else base
+
+
 def _safe_name(text: str, max_len: int = 48) -> str:
     text = re.sub(r'[\\/:*?"<>|\s]+', "_", text.strip())
     text = re.sub(r"_+", "_", text).strip("._")
@@ -80,6 +85,21 @@ def _run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]
     )
 
 
+def _ffmpeg_executable() -> str:
+    """Return a system ffmpeg or the binary bundled by imageio-ffmpeg."""
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+    except ImportError:
+        return ""
+    try:
+        return get_ffmpeg_exe()
+    except Exception:  # noqa: BLE001 - report a normal tool failure below.
+        return ""
+
+
 def _run_yt_dlp(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess[str]:
     candidates = [["yt-dlp"], [sys.executable, "-m", "yt_dlp"]]
     errors: list[str] = []
@@ -130,12 +150,13 @@ def _metadata_from_bili_api(url: str) -> dict[str, Any]:
     if payload.get("code") != 0:
         raise RuntimeError(payload.get("message") or f"B站 API 返回 code={payload.get('code')}")
     data = payload["data"]
+    canonical_bvid = data.get("bvid") or bvid
     owner = data.get("owner") or {}
     stat = data.get("stat") or {}
     return {
         "platform": "bilibili",
-        "source_url": url,
-        "bvid": data.get("bvid") or bvid,
+        "source_url": _canonical_video_url(canonical_bvid),
+        "bvid": canonical_bvid,
         "aid": data.get("aid"),
         "cid": data.get("cid"),
         "title": data.get("title") or bvid,
@@ -231,8 +252,10 @@ def _write_segments(path: Path, segments: list[dict[str, Any]], source: str) -> 
     return content
 
 
-def _download_subtitles(url: str, job: Path, timeout: int) -> list[Path]:
-    out = str(job / "subtitle.%(ext)s")
+def _download_subtitles(url: str, job: Path, timeout: int, stem: str = "subtitle") -> list[Path]:
+    for stale in job.glob(f"{stem}*.vtt"):
+        stale.unlink()
+    out = str(job / f"{stem}.%(ext)s")
     _run_yt_dlp(
         [
             "--skip-download",
@@ -248,14 +271,22 @@ def _download_subtitles(url: str, job: Path, timeout: int) -> list[Path]:
         ],
         timeout=timeout,
     )
-    return sorted(job.glob("subtitle*.vtt"))
+    return sorted(job.glob(f"{stem}*.vtt"))
 
 
-def _transcribe_audio(url: str, job: Path, model_size: str, timeout: int) -> list[dict[str, Any]]:
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError as exc:
-        raise RuntimeError("未安装 faster-whisper，无法在无字幕时执行 ASR：pip install faster-whisper") from exc
+def _transcribe_audio(
+    url: str,
+    job: Path,
+    model_size: str,
+    timeout: int,
+    model: Any | None = None,
+) -> tuple[list[dict[str, Any]], Any]:
+    if model is None:
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise RuntimeError("未安装 faster-whisper，无法在无字幕时执行 ASR：pip install faster-whisper") from exc
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
     with tempfile.TemporaryDirectory(prefix="mini_openclaw_audio_") as tmp:
         audio_out = str(Path(tmp) / "audio.%(ext)s")
@@ -263,9 +294,8 @@ def _transcribe_audio(url: str, job: Path, model_size: str, timeout: int) -> lis
         audio_files = [p for p in Path(tmp).iterdir() if p.is_file()]
         if not audio_files:
             raise RuntimeError("yt-dlp 未下载到可用音频流")
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
         segments, _info = model.transcribe(str(audio_files[0]), vad_filter=True)
-        return [
+        records = [
             {
                 "start": _format_seconds(seg.start),
                 "end": _format_seconds(seg.end),
@@ -274,6 +304,114 @@ def _transcribe_audio(url: str, job: Path, model_size: str, timeout: int) -> lis
             for seg in segments
             if seg.text.strip()
         ]
+        return records, model
+
+
+def _cached_transcript(path: Path) -> dict[str, Any] | None:
+    if not path.is_file() or path.stat().st_size == 0:
+        return None
+    content = path.read_text(encoding="utf-8", errors="ignore")
+    if not any(line.startswith("[") for line in content.splitlines()):
+        return None
+    content, warning = _to_simplified(content)
+    path.write_text(content, encoding="utf-8")
+    source_match = re.search(r"^# transcript_source:\s*(.+)$", content, flags=re.MULTILINE)
+    return {
+        "ok": True,
+        "source": source_match.group(1).strip() if source_match else "cache",
+        "cached": True,
+        "segments": sum(1 for line in content.splitlines() if line.startswith("[")),
+        "normalize_warning": warning,
+        "content": content,
+    }
+
+
+def _transcribe_part(
+    url: str,
+    job: Path,
+    transcript_path: Path,
+    subtitle_stem: str,
+    model_size: str,
+    timeout: int,
+    asr_model: Any | None,
+    reuse_existing: bool,
+) -> tuple[dict[str, Any], Any | None]:
+    if reuse_existing:
+        cached = _cached_transcript(transcript_path)
+        if cached:
+            cached["transcript_path"] = str(transcript_path)
+            return cached, asr_model
+
+    transcript_path.unlink(missing_ok=True)
+    subtitle_error = ""
+    try:
+        subtitle_files = _download_subtitles(
+            url,
+            job,
+            timeout=min(timeout, 300),
+            stem=subtitle_stem,
+        )
+        for subtitle in subtitle_files:
+            segments = _strip_vtt(subtitle)
+            if segments:
+                content = _write_segments(transcript_path, segments, f"subtitle:{subtitle.name}")
+                return {
+                    "ok": True,
+                    "source": "subtitle",
+                    "cached": False,
+                    "segments": len(segments),
+                    "transcript_path": str(transcript_path),
+                    "content": content,
+                }, asr_model
+    except Exception as exc:
+        subtitle_error = f"{type(exc).__name__}: {exc}"
+
+    try:
+        segments, asr_model = _transcribe_audio(
+            url,
+            job,
+            model_size=model_size,
+            timeout=timeout,
+            model=asr_model,
+        )
+        content = _write_segments(transcript_path, segments, f"asr:faster-whisper:{model_size}")
+        return {
+            "ok": True,
+            "source": "asr",
+            "cached": False,
+            "segments": len(segments),
+            "transcript_path": str(transcript_path),
+            "subtitle_error": subtitle_error,
+            "content": content,
+        }, asr_model
+    except Exception as exc:
+        return {
+            "ok": False,
+            "transcript_path": str(transcript_path),
+            "subtitle_error": subtitle_error,
+            "asr_error": f"{type(exc).__name__}: {exc}",
+        }, asr_model
+
+
+def _merge_part_transcripts(path: Path, parts: list[dict[str, Any]]) -> str:
+    lines = ["# transcript_source: multi-part", f"# part_count: {len(parts)}"]
+    for part in parts:
+        if not part.get("ok"):
+            continue
+        title, _warning = _to_simplified(str(part.get("title") or ""))
+        lines.extend([
+            "",
+            f"## P{part['page']}: {title or '未命名分P'}",
+            f"# part_source: {part.get('source', '')}",
+            f"# part_url: {part.get('url', '')}",
+        ])
+        for line in str(part.get("content") or "").splitlines():
+            if line.startswith(("# transcript_source:", "# normalize_warning:")):
+                continue
+            lines.append(line)
+    content = "\n".join(lines).strip() + "\n"
+    path.write_text(content, encoding="utf-8")
+    return content
 
 
 def _transcribe(
@@ -281,6 +419,7 @@ def _transcribe(
     model_size: str = "base",
     max_duration_seconds: int = 7200,
     timeout: int = 900,
+    force: bool = False,
 ) -> str:
     if not url:
         return "[错误] video_transcribe 缺少必需参数 url"
@@ -297,48 +436,74 @@ def _transcribe(
     job = _job_dir(metadata["bvid"])
     (job / "metadata.json").write_text(_json(metadata), encoding="utf-8")
     transcript_path = job / "transcript.txt"
+    pages = metadata.get("pages") or [{
+        "page": 1,
+        "part": metadata.get("title") or "",
+        "duration": duration,
+        "duration_text": metadata.get("duration_text") or "",
+    }]
+    is_multi_part = len(pages) > 1
+    asr_model: Any | None = None
+    part_results: list[dict[str, Any]] = []
 
-    subtitle_error = ""
-    try:
-        subtitle_files = _download_subtitles(url, job, timeout=min(timeout, 300))
-        for subtitle in subtitle_files:
-            segments = _strip_vtt(subtitle)
-            if segments:
-                content = _write_segments(transcript_path, segments, f"subtitle:{subtitle.name}")
-                return _json({
-                    "ok": True,
-                    "source": "subtitle",
-                    "bvid": metadata["bvid"],
-                    "transcript_path": str(transcript_path),
-                    "metadata_path": str(job / "metadata.json"),
-                    "segments": len(segments),
-                    "excerpt": content[:3000],
-                })
-    except Exception as exc:
-        subtitle_error = f"{type(exc).__name__}: {exc}"
+    for index, page_meta in enumerate(pages, start=1):
+        page_number = int(page_meta.get("page") or index)
+        page_url = _canonical_video_url(metadata["bvid"], page_number)
+        part_path = job / f"transcript_p{page_number}.txt" if is_multi_part else transcript_path
+        result, asr_model = _transcribe_part(
+            page_url,
+            job,
+            transcript_path=part_path,
+            subtitle_stem=f"subtitle_p{page_number}" if is_multi_part else "subtitle",
+            model_size=model_size,
+            timeout=timeout,
+            asr_model=asr_model,
+            reuse_existing=not force,
+        )
+        result.update({
+            "page": page_number,
+            "title": page_meta.get("part") or f"P{page_number}",
+            "url": page_url,
+            "duration": page_meta.get("duration"),
+            "duration_text": page_meta.get("duration_text") or "",
+        })
+        part_results.append(result)
 
-    try:
-        segments = _transcribe_audio(url, job, model_size=model_size, timeout=timeout)
-        content = _write_segments(transcript_path, segments, f"asr:faster-whisper:{model_size}")
-        return _json({
-            "ok": True,
-            "source": "asr",
-            "bvid": metadata["bvid"],
-            "transcript_path": str(transcript_path),
-            "metadata_path": str(job / "metadata.json"),
-            "segments": len(segments),
-            "subtitle_error": subtitle_error,
-            "excerpt": content[:3000],
-        })
-    except Exception as exc:
-        return _json({
-            "ok": False,
-            "bvid": metadata["bvid"],
-            "metadata_path": str(job / "metadata.json"),
-            "subtitle_error": subtitle_error,
-            "asr_error": f"{type(exc).__name__}: {exc}",
-            "message": "未能获取字幕或 ASR 转写；不要基于标题/搜索结果冒充视频内容。",
-        })
+    successful = [part for part in part_results if part.get("ok")]
+    failed = [part for part in part_results if not part.get("ok")]
+    if is_multi_part and successful:
+        content = _merge_part_transcripts(transcript_path, part_results)
+    elif successful:
+        content = str(successful[0].get("content") or "")
+    else:
+        transcript_path.unlink(missing_ok=True)
+        content = ""
+
+    public_parts = [
+        {key: value for key, value in part.items() if key != "content"}
+        for part in part_results
+    ]
+    response = {
+        "ok": not failed,
+        "partial": bool(successful and failed),
+        "source": "multi-part" if is_multi_part else (successful[0].get("source") if successful else ""),
+        "bvid": metadata["bvid"],
+        "page_count": len(part_results),
+        "pages_succeeded": [part["page"] for part in successful],
+        "pages_failed": [part["page"] for part in failed],
+        "transcript_path": str(transcript_path) if successful else "",
+        "metadata_path": str(job / "metadata.json"),
+        "segments": sum(int(part.get("segments") or 0) for part in successful),
+        "parts": public_parts,
+        "excerpt": content[:3000],
+    }
+    if failed:
+        response["message"] = (
+            "部分分P转写失败；只能基于成功分P总结，并必须在信息缺口中列出失败分P。"
+            if successful
+            else "所有分P均未能获取字幕或 ASR 转写；不要基于标题或搜索结果冒充视频内容。"
+        )
+    return _json(response)
 
 
 def _frame_ocr(url: str = "", interval_seconds: int = 15, timeout: int = 900) -> str:
@@ -346,8 +511,9 @@ def _frame_ocr(url: str = "", interval_seconds: int = 15, timeout: int = 900) ->
         return "[错误] video_frame_ocr 缺少必需参数 url"
     interval_seconds = int(interval_seconds)
     timeout = int(timeout)
-    if not shutil.which("ffmpeg"):
-        return "[失败] 未找到 ffmpeg，无法抽取关键帧。请先安装 ffmpeg 并加入 PATH。"
+    ffmpeg_exe = _ffmpeg_executable()
+    if not ffmpeg_exe:
+        return "[失败] 未找到 ffmpeg，无法抽取关键帧。请安装系统 ffmpeg 或 imageio-ffmpeg。"
     try:
         import easyocr
     except ImportError:
@@ -377,7 +543,7 @@ def _frame_ocr(url: str = "", interval_seconds: int = 15, timeout: int = 900) ->
         frame_pattern = str(frames_dir / "frame_%05d.jpg")
         ffmpeg = _run(
             [
-                "ffmpeg",
+                ffmpeg_exe,
                 "-y",
                 "-i",
                 str(video_files[0]),
@@ -613,7 +779,7 @@ video_probe_tool = Tool(
 
 video_transcribe_tool = Tool(
     "video_transcribe",
-    "提取 B站公开视频字幕；无字幕时用 yt-dlp 下载音频并用 faster-whisper 本地转写。",
+    "提取 B站公开视频字幕；无字幕时本地 ASR。多分P视频会在一次调用中逐P转写并合并 transcript.txt。",
     {
         "type": "object",
         "properties": {
@@ -621,6 +787,7 @@ video_transcribe_tool = Tool(
             "model_size": {"type": "string", "default": "base"},
             "max_duration_seconds": {"type": "integer", "default": 7200},
             "timeout": {"type": "integer", "default": 900},
+            "force": {"type": "boolean", "default": False, "description": "是否忽略已有分P转写并强制重新提取。"},
         },
         "required": ["url"],
     },

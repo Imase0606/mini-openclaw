@@ -1,6 +1,8 @@
 # --- 核心（Day1 起就需要）---
 httpx>=0.27          # 调 DeepSeek API（backend/client.py）/ web_fetch
 pydantic>=2.0        # 工具 schema 校验
+PyYAML>=6.0          # 解析 skills/*/SKILL.md 的 YAML frontmatter
+Pillow>=10.0         # 图像输入的格式校验、EXIF 纠正与缩放
 
 # --- Day7 web_fetch 工具 ---
 markdownify>=0.13    # web_fetch: HTML -> markdown
@@ -11,10 +13,12 @@ markdownify>=0.13    # web_fetch: HTML -> markdown
 
 # --- 视频知识库工具（按需安装）---
 yt-dlp>=2025.6.30    # B站公开视频元数据、字幕、音频/视频流提取
-# opencc-python-reimplemented>=0.1.7  # 繁体中文转简体中文（可选，但推荐）
+opencc-python-reimplemented>=0.1.7  # 字幕、ASR、OCR 和 Markdown 的繁体转简体
 # faster-whisper>=1.1.0  # 无字幕视频的本地 ASR 转写（CPU 可跑，首次会下载模型）
-# easyocr>=1.7.2         # 关键帧 OCR；依赖 torch，按演示机器条件安装
-# 系统依赖：ffmpeg（抽音频/关键帧），需加入 PATH
+easyocr>=1.7.2          # 关键帧 OCR；依赖 torch，WSL 建议安装 CPU 版 torch
+imageio-ffmpeg>=0.6.0   # 系统未安装 ffmpeg 时，提供抽帧所需的内置二进制
+# WSL CPU 环境建议先安装：pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# 也可使用系统 ffmpeg；存在时会优先于 imageio-ffmpeg。
 
-# 说明：本课程大脑走 DeepSeek API，不本地部署模型、不做 LoRA，故无需 vllm/peft/torch 等重依赖。
+# 说明：本课程大脑走 DeepSeek API，不本地部署大语言模型、不做 LoRA；torch 仅供 EasyOCR 使用。
 # （Day2 的 nanoGPT 实验请用单独的 conda 环境安装 torch，避免污染 agent 环境。）

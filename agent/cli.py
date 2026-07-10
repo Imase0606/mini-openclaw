@@ -35,6 +35,12 @@ def selfcheck() -> int:
     except Exception as e:  # noqa
         print(f"[FAIL] 主循环：{e}"); ok = False
 
+    try:
+        from backend.multimodal import multimodal_user_content  # noqa
+        print("[ok] 图像输入模块可用（--image 内容块通道）")
+    except Exception as e:  # noqa
+        print(f"[FAIL] 图像输入模块：{e}"); ok = False
+
     print("== 自检", "通过 ✅" if ok else "未通过 ❌", "==")
     print("\n下一步：按 dayNN 的 lab-guide 填 # TODO 标记。")
     return 0 if ok else 1
@@ -44,10 +50,26 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="mini-openclaw")
     p.add_argument("task", nargs="?", help="要让 agent 完成的任务（自然语言）")
     p.add_argument("--selfcheck", action="store_true", help="只做骨架自检")
+    p.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="附加图片，可重复传入多张；图片最长边会缩放到 1568px",
+    )
     args = p.parse_args(argv)
 
-    if args.selfcheck or not args.task:
+    if args.selfcheck or (not args.task and not args.image):
         return selfcheck()
+
+    user_task: str | list[dict[str, object]] = args.task or "请描述图片中的内容。"
+    if args.image:
+        from backend.multimodal import multimodal_user_content
+        try:
+            user_task = multimodal_user_content(str(user_task), args.image)
+        except (OSError, ValueError) as exc:
+            print(f"[失败] 无法准备图片输入：{exc}")
+            return 2
 
     # 真正跑任务：优先用 DeepSeek API；没配 key 时回退到 FakeBackend（离线打通管道）
     from agent.loop import AgentLoop
@@ -83,14 +105,39 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[提示] calc server 也未接入（{e2}），仅用内置工具。")
     try:
         from backend.client import DeepSeekBackend
-        backend = DeepSeekBackend()                       # 需要 DEEPSEEK_API_KEY
+        backend_options = {}
+        if args.image:
+            backend_options = {
+                "api_key": os.environ.get("VISION_API_KEY") or None,
+                "base_url": os.environ.get("VISION_BASE_URL") or None,
+                "model": os.environ.get("VISION_MODEL") or None,
+            }
+        backend = DeepSeekBackend(**backend_options)
+        if args.image and not os.environ.get("VISION_MODEL"):
+            print("[提示] 未配置 VISION_MODEL，将使用 DEEPSEEK_MODEL；该模型必须支持视觉输入。")
     except Exception as e:  # noqa
         from backend.fake_backend import FakeBackend
         print(f"[提示] 未启用真后端（{e}），回退 FakeBackend。配置 DEEPSEEK_API_KEY 后即用真模型。")
         backend = FakeBackend()
-    agent = AgentLoop(backend, reg, SYSTEM_PROMPT)
-    print(agent.run(args.task))
-    return 0
+
+    from skills.loader import load_skills, skills_catalog
+    skills = load_skills()
+    system = (
+        SYSTEM_PROMPT
+        + "\n\n# 可用 Skills（按需加载）\n"
+        + "当用户任务与某个 Skill 的描述匹配时，必须先调用 read 工具完整读取其 "
+          "instructions 路径，再按正文流程执行。未命中时不要读取 Skill。\n"
+        + skills_catalog(skills)
+    )
+    agent = AgentLoop(backend, reg, system)
+    try:
+        print(agent.run(user_task))
+        return 0
+    except RuntimeError as exc:
+        if args.image:
+            print(f"[失败] {exc}")
+            return 1
+        raise
 
 
 if __name__ == "__main__":

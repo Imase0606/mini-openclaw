@@ -12,6 +12,7 @@
 Day5 你要把下面的 run() 真正实现出来（Day6 随工具集扩展完善）。骨架已给出结构与防呆上限。
 """
 from __future__ import annotations
+from pathlib import Path
 from typing import Any
 
 from tools.base import ToolRegistry
@@ -26,7 +27,7 @@ class AgentLoop:
         self.system_prompt = system_prompt
         self.max_turns = max_turns          # 防死循环：硬上限
 
-    def run(self, user_task: str) -> str:
+    def run(self, user_task: str | list[dict[str, Any]]) -> str:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user_task},
@@ -53,11 +54,20 @@ class AgentLoop:
                     except Exception as e:
                         obs = f"工具 {call['name']} 执行出错：{type(e).__name__}: {e}"
                 # 截断过长的工具结果再注入，防止单个 obs 撑爆上下文
+                arguments = call.get("arguments", {})
+                read_name = Path(str(arguments.get("path", ""))).name.lower()
+                observation_limit = (
+                    80_000
+                    if call["name"] == "read"
+                    and read_name.startswith("transcript")
+                    and read_name.endswith(".txt")
+                    else 4_000
+                )
                 messages.append({"role": "tool", "name": call["name"],
                                  "tool_call_id": call.get("id"),
-                                 "content": truncate_observation(str(obs))})
+                                 "content": truncate_observation(str(obs), max_chars=observation_limit)})
 
             # 本轮工具都跑完后，检查上下文预算，超限则 compaction
             messages = maybe_compact(messages, backend=self.backend, budget=6000)
 
-        return "[达到最大轮数上限，未完成任务]"
+        return f"[达到最大轮数上限（{self.max_turns}/{self.max_turns} 轮），未完成任务]"

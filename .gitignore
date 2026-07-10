@@ -5,3 +5,8 @@ out-*/
 *.bin
 *.gguf
 .DS_Store
+
+# Keep one curated knowledge-base sample; ignore runtime-generated video outputs.
+knowledge_base/*
+!knowledge_base/BV1j9MP6wEV9/
+!knowledge_base/BV1j9MP6wEV9/**
