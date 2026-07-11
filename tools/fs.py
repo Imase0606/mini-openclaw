@@ -1,12 +1,14 @@
 """文件读写工具（Day5：read / write）。"""
 from __future__ import annotations
 from .base import Tool
+from .path_security import workspace_path
 
 
 def _read(path: str = "", max_bytes: int = 100_000) -> str:
     if not path:
         return "[错误] read 缺少必需参数 path"
-    with open(path, "r", encoding="utf-8") as f:
+    safe_path = workspace_path(path)
+    with safe_path.open("r", encoding="utf-8") as f:
         text = f.read(max_bytes + 1)
     truncated = len(text) > max_bytes
     if truncated:
@@ -21,9 +23,10 @@ def _read(path: str = "", max_bytes: int = 100_000) -> str:
 def _write(path: str = "", content: str = "") -> str:
     if not path:
         return "[错误] write 缺少必需参数 path"
-    with open(path, "w", encoding="utf-8") as f:
+    safe_path = workspace_path(path)
+    with safe_path.open("w", encoding="utf-8") as f:
         n = f.write(content)
-    return f"已写入 {n} 字节到 {path}"
+    return f"已写入 {n} 字节到 {safe_path.relative_to(safe_path.cwd())}"
 
 
 read_tool = Tool(

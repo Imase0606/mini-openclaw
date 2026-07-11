@@ -68,8 +68,17 @@ class DeepSeekBackend:
                     f" API 返回：{detail}"
                 ) from exc
             raise
-        msg = resp.json()["choices"][0]["message"]
-        return self._normalize(msg)
+        payload_out = resp.json()
+        msg = payload_out["choices"][0]["message"]
+        normalized = self._normalize(msg)
+        usage = payload_out.get("usage") or {}
+        normalized["usage"] = {
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage.get("completion_tokens") or 0),
+            "total_tokens": int(usage.get("total_tokens") or 0),
+        }
+        normalized["model"] = payload_out.get("model") or self.model
+        return normalized
 
     # --- 把内部 messages（含 role=tool）转成 OpenAI 标准格式 ---
     def _to_openai_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

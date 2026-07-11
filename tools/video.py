@@ -1,7 +1,6 @@
 """Bilibili video extraction tools for knowledge-base generation."""
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -13,10 +12,50 @@ from pathlib import Path
 from typing import Any
 
 from .base import Tool
+from .path_security import workspace_path
 
 
 KB_ROOT = Path("knowledge_base")
 BVID_RE = re.compile(r"(BV[0-9A-Za-z]+)")
+VIDEO_TYPES = {"tutorial", "knowledge", "narrative", "commentary", "general"}
+VIDEO_TYPE_LABELS = {
+    "tutorial": "教程/操作演示",
+    "knowledge": "知识讲解/课程",
+    "narrative": "娱乐/剧情/事件记录",
+    "commentary": "观点/测评/评论",
+    "general": "通用",
+}
+VIDEO_SECTION_PROFILES = {
+    "tutorial": [
+        ("objective", "目标与最终成果"),
+        ("prerequisites", "前置条件"),
+        ("steps", "操作步骤"),
+        ("key_operations", "关键操作与参数"),
+        ("pitfalls", "易错点与注意事项"),
+        ("outcome", "结果与验证方式"),
+    ],
+    "knowledge": [
+        ("central_question", "核心问题"),
+        ("concepts", "关键概念"),
+        ("argument_chain", "论证与知识脉络"),
+        ("examples", "案例与例证"),
+        ("conclusion", "结论与适用范围"),
+    ],
+    "narrative": [
+        ("synopsis", "内容概况"),
+        ("development", "情节/事件发展"),
+        ("people_scenes", "人物与关键场景"),
+        ("themes_highlights", "主题与亮点"),
+    ],
+    "commentary": [
+        ("position", "核心立场"),
+        ("arguments", "主要论点"),
+        ("evidence", "论据与案例"),
+        ("counterpoints", "反方观点与限制"),
+        ("conclusion", "结论与适用范围"),
+    ],
+    "general": [("organization", "内容整理")],
+}
 
 
 def _extract_bvid(url: str) -> str:
@@ -589,14 +628,33 @@ def _frame_ocr(url: str = "", interval_seconds: int = 15, timeout: int = 900) ->
     })
 
 
-def _read_text_or_value(value: str = "", path: str = "") -> str:
+def _read_text_or_value(
+    value: str = "",
+    path: str = "",
+    *,
+    job: Path | None = None,
+    allowed_names: set[str] | None = None,
+) -> str:
     if path:
-        return Path(path).read_text(encoding="utf-8", errors="ignore")
+        raw = Path(path)
+        if raw.is_absolute() or ".." in raw.parts:
+            raise PermissionError("kb_write 输入文件禁止绝对路径和上级目录跳转")
+        resolved = workspace_path(raw)
+        if job is None:
+            raise PermissionError("kb_write 输入文件缺少目标视频目录约束")
+        safe_job = job.resolve()
+        try:
+            resolved.relative_to(safe_job)
+        except ValueError as exc:
+            raise PermissionError("kb_write 只能读取同一 BV 知识库目录中的输入文件") from exc
+        if allowed_names is not None and resolved.name not in allowed_names:
+            raise PermissionError(f"kb_write 不允许读取该类型文件：{resolved.name}")
+        return resolved.read_text(encoding="utf-8", errors="ignore")
     return value or ""
 
 
-def _load_metadata(value: str = "", path: str = "") -> dict[str, Any]:
-    raw = _read_text_or_value(value, path)
+def _load_metadata(value: str = "", path: str = "", *, job: Path | None = None) -> dict[str, Any]:
+    raw = _read_text_or_value(value, path, job=job, allowed_names={"metadata.json"})
     if not raw:
         return {}
     try:
@@ -636,17 +694,40 @@ def _kb_write(
     key_points: str = "",
     section_notes: str = "",
     action_suggestions: str = "",
+    video_type: str = "general",
+    sections: dict[str, Any] | None = None,
 ) -> str:
     if not source_url:
         return "[错误] kb_write 缺少必需参数 source_url"
-    meta = _load_metadata(metadata, metadata_path)
-    bvid = meta.get("bvid") or (_extract_bvid(source_url) if BVID_RE.search(source_url) else hashlib.sha1(source_url.encode()).hexdigest()[:10])
+    try:
+        bvid = _extract_bvid(source_url)
+    except ValueError as exc:
+        return f"[错误] {exc}"
+    job = _job_dir(bvid)
+    try:
+        meta = _load_metadata(metadata, metadata_path, job=job)
+    except (OSError, PermissionError) as exc:
+        return f"[安全策略拒绝] {exc}"
+    if meta.get("bvid") and meta["bvid"] != bvid:
+        return "[安全策略拒绝] metadata.json 的 BV 号与 source_url 不一致"
     title = title or meta.get("title") or bvid
     title, title_warning = _to_simplified(title)
-    job = _job_dir(bvid)
 
-    transcript_text = _read_text_or_value(transcript, transcript_path)
-    visual_text = _read_text_or_value(visual_notes, visual_notes_path)
+    try:
+        transcript_text = _read_text_or_value(
+            transcript,
+            transcript_path,
+            job=job,
+            allowed_names={"transcript.txt"},
+        )
+        visual_text = _read_text_or_value(
+            visual_notes,
+            visual_notes_path,
+            job=job,
+            allowed_names={"visual_notes.jsonl"},
+        )
+    except (OSError, PermissionError) as exc:
+        return f"[安全策略拒绝] {exc}"
     if not transcript_text and not visual_text:
         return "[错误] kb_write 需要 transcript/transcript_path 或 visual_notes/visual_notes_path，不能生成空知识库。"
     normalize_warnings: list[str] = []
@@ -660,6 +741,15 @@ def _kb_write(
     key_points, key_points_warning = _to_simplified(key_points)
     section_notes, notes_warning = _to_simplified(section_notes)
     action_suggestions, action_warning = _to_simplified(action_suggestions)
+    normalized_sections: dict[str, str] = {}
+    if isinstance(sections, dict):
+        for key, value in sections.items():
+            if not isinstance(value, str) or not value.strip():
+                continue
+            normalized_value, section_warning = _to_simplified(value.strip())
+            normalized_sections[str(key)] = normalized_value
+            if section_warning and section_warning not in normalize_warnings:
+                normalize_warnings.append(section_warning)
     for warning in (
         title_warning,
         summary_warning,
@@ -671,12 +761,28 @@ def _kb_write(
         if warning and warning not in normalize_warnings:
             normalize_warnings.append(warning)
     digest = content_digest or summary
+    video_type = video_type if video_type in VIDEO_TYPES else "general"
+    allowed_section_keys = {key for key, _heading in VIDEO_SECTION_PROFILES[video_type]}
+    normalized_sections = {
+        key: value for key, value in normalized_sections.items()
+        if key in allowed_section_keys
+    }
+    if section_notes.strip() and not normalized_sections:
+        legacy_key = {
+            "tutorial": "steps",
+            "knowledge": "argument_chain",
+            "narrative": "development",
+            "commentary": "arguments",
+            "general": "organization",
+        }[video_type]
+        normalized_sections[legacy_key] = section_notes.strip()
 
     metadata_out = job / "metadata.json"
-    if meta:
-        if normalize_warnings:
-            meta["normalize_warning"] = "；".join(normalize_warnings)
-        metadata_out.write_text(_json(meta), encoding="utf-8")
+    if not meta:
+        meta = {"platform": "bilibili", "source_url": source_url, "bvid": bvid, "title": title}
+    if normalize_warnings:
+        meta["normalize_warning"] = "；".join(normalize_warnings)
+    metadata_out.write_text(_json(meta), encoding="utf-8")
     transcript_out = job / "transcript.txt"
     if transcript_text:
         transcript_out.write_text(transcript_text, encoding="utf-8")
@@ -708,12 +814,10 @@ def _kb_write(
     if visual_text:
         files.append(f"- 画面 OCR：`{visual_out.name}`")
 
-    section_heading = "## 按时间/段落整理"
-    has_timestamps = bool(re.search(r"^\[[0-9:,]+-", transcript_text, flags=re.MULTILINE))
-    default_notes = (
-        "请基于 `transcript.txt` 中的时间戳整理视频脉络。"
-        if has_timestamps
-        else "当前转写缺少可靠时间戳，请按主题段落整理视频脉络。"
+    type_sections = "\n".join(
+        f"## {heading}\n{normalized_sections[key]}\n"
+        for key, heading in VIDEO_SECTION_PROFILES[video_type]
+        if normalized_sections.get(key, "").strip()
     )
     visual_section = (
         f"\n## 画面补充信息\n{visual_text[:3000]}\n"
@@ -735,6 +839,7 @@ def _kb_write(
 ## 来源信息
 - 来源链接：{source_url}
 - 平台：B站（bilibili）
+- 视频类型：{VIDEO_TYPE_LABELS[video_type]}（`{video_type}`）
 - 作者/UP主：{meta.get("author", "")}
 - 发布时间：{meta.get("published_at", "")}
 - 生成时间：{datetime.now().date().isoformat()}
@@ -749,8 +854,7 @@ def _kb_write(
 ## 核心要点
 {key_points or "- 待 agent 基于真实转写内容提炼。"}
 
-{section_heading}
-{section_notes or default_notes}
+{type_sections}
 {visual_section}{action_section}
 ## 信息缺口与可信度说明
 - 已确认：本文件基于本地保存的 transcript/visual_notes/metadata 生成。
@@ -766,6 +870,7 @@ def _kb_write(
         "visual_notes_path": str(visual_out) if visual_text else "",
         "chunks_path": str(chunks_path),
         "chunks": len(chunks),
+        "video_type": video_type,
         "normalize_warning": "；".join(normalize_warnings),
     })
 
@@ -828,6 +933,17 @@ kb_write_tool = Tool(
             "key_points": {"type": "string", "description": "面向人类学习笔记的核心要点。"},
             "section_notes": {"type": "string", "description": "按时间或主题段落整理的视频脉络。"},
             "action_suggestions": {"type": "string", "description": "仅在视频包含教程/方法论/可执行建议时填写。"},
+            "video_type": {
+                "type": "string",
+                "enum": ["tutorial", "knowledge", "narrative", "commentary", "general"],
+                "default": "general",
+                "description": "根据转写判定的视频类型；无法可靠分类时使用 general。",
+            },
+            "sections": {
+                "type": "object",
+                "description": "按 video_type 填写对应结构字段，空字段不要传入。",
+                "additionalProperties": {"type": "string"},
+            },
         },
         "required": ["source_url"],
     },

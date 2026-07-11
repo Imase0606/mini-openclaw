@@ -5,6 +5,7 @@ out-*/
 *.bin
 *.gguf
 .DS_Store
+.mini-openclaw/
 
 # Keep one curated knowledge-base sample; ignore runtime-generated video outputs.
 knowledge_base/*

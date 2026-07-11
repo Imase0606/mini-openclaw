@@ -48,6 +48,52 @@ python -m agent.cli --selfcheck
 # 3. 之后每天填对应模块，重跑相关入口
 ```
 
+### 视频知识库
+
+```bash
+# 默认读取转写后自动选择教程、知识、叙事、评论或通用模板
+python -m agent.cli "提炼这个B站视频：https://www.bilibili.com/video/BV.../"
+
+# 需要固定报告结构时可手动覆盖类型
+python -m agent.cli --video-type tutorial "提炼这个B站视频：https://www.bilibili.com/video/BV.../"
+```
+
+视频任务启用最小权限工具集，不会调用通用 `write`、`edit`、`bash` 或 MCP 写工具。产物统一写入 `knowledge_base/<BV>/`。
+
+### 安全确认
+
+`write`、`edit`、`bash`、`web_fetch` 和 MCP 工具默认需要终端确认。自动化场景可显式传入 `--yes`，但工作区边界、敏感路径保护、Shell 沙箱和网络白名单仍然生效：
+
+```bash
+python -m agent.cli --yes "运行 echo hello"
+WEB_FETCH_ALLOW_HOSTS=docs.example.org python -m agent.cli "总结 https://docs.example.org/guide"
+python -m security.redteam
+```
+
+WSL/Linux 会优先使用 bubblewrap 提供只读系统、工作区可写和禁网沙箱；缺失时使用保守降级防护：
+
+```bash
+sudo apt install bubblewrap
+bwrap --version
+```
+
+### 记忆、规划与 Trace
+
+```bash
+# 明确要求后，remember 会在确认后写入私有运行时记忆
+python -m agent.cli "记住：教程视频应保留完整操作步骤"
+
+# 强制规划或关闭规划
+python -m agent.cli --plan "完成一个多步骤任务"
+python -m agent.cli --no-plan "完成一个简单任务"
+
+# 默认 trace 写到 .mini-openclaw/traces；可回放 token、成本和耗时
+python -m agent.cli --replay-trace .mini-openclaw/traces/<trace>.jsonl
+python -m eval.demo_check
+```
+
+成本估算通过 `MODEL_INPUT_USD_PER_1M` 和 `MODEL_OUTPUT_USD_PER_1M` 配置；未配置时仍统计 token，但不猜测供应商价格。
+
 ## 里程碑
 
 - **v1（Day6）**：`python -m agent.cli "创建 hello.py 并运行输出当前时间"` 能完成。
