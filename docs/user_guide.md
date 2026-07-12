@@ -238,6 +238,7 @@ python -m unittest discover -s tests -v
 python -m compileall agent backend tools tui security eval
 python -m agent.cli --selfcheck
 python -m eval.demo_check
+python -m eval.demo_check --live
 python -m security.redteam
 pip check
 ```

@@ -15,7 +15,7 @@ from typing import Any
 import json
 
 # 不同模型的对话模板不同（ChatML / Llama / GLM）。这里以 GLM 风格为例占位。
-# TODO[Day3] 校对你所用模型的真实特殊标记！拼错一个 token，模型行为就会跑偏。
+# ChatML compatibility markers used by the legacy prompt-rendering evaluator.
 ROLE_TOKENS = {
     "system": "<|im_start|>system\n",
     "user": "<|im_start|>user\n",

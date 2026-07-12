@@ -90,6 +90,21 @@ class SessionStoreTests(unittest.TestCase):
 
 
 class RuntimeExtensionTests(unittest.TestCase):
+    def test_runtime_closes_injected_backend(self):
+        class ClosableBackend:
+            model = "close-test"
+
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        backend = ClosableBackend()
+        runtime = AgentRuntime(backend=backend, trace_enabled=False, enable_mcp=False)
+        runtime.close()
+        self.assertTrue(backend.closed)
+
     def test_backend_accepts_root_or_v1_base_url(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
             root = DeepSeekBackend(base_url="https://example.com")

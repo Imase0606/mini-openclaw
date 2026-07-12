@@ -39,6 +39,10 @@ class DeepSeekBackend:
             timeout=httpx.Timeout(request_timeout, connect=min(20.0, request_timeout)),
         )
 
+    def close(self) -> None:
+        """Release the shared HTTP connection pool."""
+        self._client.close()
+
     @property
     def chat_completions_url(self) -> str:
         suffix = "/chat/completions" if self.base_url.endswith("/v1") else "/v1/chat/completions"

@@ -1,11 +1,10 @@
-# mini-OpenClaw（学生 starter 仓库）
+# mini-OpenClaw
 
 <img src="tui/assets/knowledge-terminal-128.png" alt="mini-openclaw 像素知识终端" width="96">
 
 完整的安装、模型配置、TUI、视频提炼与图片分析说明见 [使用指南](docs/user_guide.md)。
 
-> 你将在这 10 天里，把这个骨架填成一个能在命令行里干活的通用智能体。
-> 每个模块里都有 `# TODO[DayN]` 标记，告诉你哪天该填哪里。
+> 面向 B站公开视频的知识提炼 Agent，同时保留通用文件、Shell、MCP、记忆、规划和可观测能力。
 
 ## 这是什么
 
@@ -24,20 +23,17 @@ mini-OpenClaw 是一个 Claude Code 式的命令行 Agent：
                               └── Skills (skills/)
 ```
 
-## 目录结构与建设节奏
+## 项目结构
 
-| 模块 | 你要做什么 | 哪天 |
-|------|-----------|------|
-| `backend/` | DeepSeek API 客户端（已给 `client.py`，配 key 即用）；Day2 连通后端 + 首个工具 schema | Day1–2 |
-| `prompt/` | render_prompt(messages, tools) 对话模板渲染 + parse_tool_calls | Day3 |
-| `agent/` | 系统提示词（Day2 起草，Day5 完善）、ReAct 主循环、上下文管理 | Day2, Day5, Day7 |
-| `tools/` | read/write/bash → edit/grep/glob → web_fetch/task_list | Day5, Day6, Day7 |
-| `mcp/` | 最小 MCP 客户端（stdio + JSON-RPC）| Day8 |
-| `skills/` | Skills 加载器 + 你领域的 Skill | Day9 |
-| `eval/` | 任务集 + 指标评测 + 消融 | Day7, Day10 |
-
-> 逐日构建目标详见各 `course/dayNN/lab-guide.md`；`grep -rn "TODO\[Day" .` 可看全部施工点。
-> 里程碑：**v1（Day6）** 端到端可用 · **v3（Day9）** 可扩展 · **终版（Day10）** 含安全层，Demo Day 展示（占总评 95%）。
+| 模块 | 职责 |
+|------|------|
+| `backend/` | DeepSeek/MiMo 的 OpenAI-compatible 客户端与图像输入 |
+| `agent/` | ReAct 主循环、上下文、权限、记忆、规划、会话和 trace |
+| `tools/` | 文件、Shell、网页与视频提取工具 |
+| `mcp/` | stdio JSON-RPC MCP 客户端 |
+| `skills/` | 按任务召回的领域工作流 |
+| `tui/` | 与 CLI 共用 Runtime 的 Textual 交互界面 |
+| `security/`、`eval/` | 红队测试、自动验收与消融实验 |
 
 ## 快速开始
 
@@ -46,10 +42,9 @@ mini-OpenClaw 是一个 Claude Code 式的命令行 Agent：
 conda create -n openclaw python=3.11 && conda activate openclaw
 pip install -r requirements.txt
 
-# 2. 先跑通骨架的"假后端"自检（Day1 就能跑）
+# 2. 运行离线自检与 Demo Day 运行时验收
 python -m agent.cli --selfcheck
-
-# 3. 之后每天填对应模块，重跑相关入口
+python -m eval.demo_check
 ```
 
 ### 视频知识库
@@ -120,6 +115,13 @@ export MINI_OPENCLAW_MODEL_ALIASES='{"local":{"api_key_env":"LOCAL_API_KEY","bas
 - **v1（Day6）**：`python -m agent.cli "创建 hello.py 并运行输出当前时间"` 能完成。
 - **v3（Day9）**：能加载 MCP server 工具 + 自定义 Skill。
 - **终版（Day10）**：含安全层，Demo Day 现场任务。
+
+Demo Day 的评分证据、时间安排和答辩准备见 [验收清单](docs/demo_checklist.md)、[演示脚本](docs/demo_runbook.md) 与 [答辩要点](docs/defense_qa.md)。正式提交前运行：
+
+```bash
+python -m unittest discover -s tests -v
+python -m eval.demo_check --release
+```
 
 ## 约定
 

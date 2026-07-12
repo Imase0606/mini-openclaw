@@ -106,6 +106,7 @@ class AgentRuntime:
     def __init__(
         self,
         *,
+        backend: Any | None = None,
         trace_enabled: bool = True,
         trace_path: str | Path | None = None,
         trace_prefix: str = "",
@@ -132,7 +133,10 @@ class AgentRuntime:
         self.model_alias = "deepseek" if self.model_profiles["deepseek"].configured else next(
             (alias for alias, profile in self.model_profiles.items() if profile.configured), "deepseek"
         )
-        self.text_backend = self._create_profile_backend(self.model_profiles[self.model_alias], allow_fake=True)
+        self.text_backend = backend or self._create_profile_backend(
+            self.model_profiles[self.model_alias],
+            allow_fake=True,
+        )
         self._vision_backends: dict[str, Any] = {}
 
     @property
@@ -214,8 +218,11 @@ class AgentRuntime:
         if not profile.configured:
             raise ValueError(f"模型未配置密钥环境变量：{profile.api_key_env}")
         backend = self._create_profile_backend(profile)
+        previous = self.text_backend
         self.model_alias = alias
         self.text_backend = backend
+        if previous is not backend and previous not in self._vision_backends.values():
+            self._close_backend(previous)
         self._emit("model_changed", alias=alias, model=profile.default_model)
         return profile
 
@@ -285,6 +292,23 @@ class AgentRuntime:
             except Exception:
                 pass
         self._mcp_clients.clear()
+        backends = [self.text_backend, *self._vision_backends.values()]
+        seen: set[int] = set()
+        for backend in backends:
+            if id(backend) in seen:
+                continue
+            seen.add(id(backend))
+            self._close_backend(backend)
+        self._vision_backends.clear()
+
+    @staticmethod
+    def _close_backend(backend: Any) -> None:
+        close = getattr(backend, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
 
     def _turn_registry(self, todo: TodoList | None) -> ToolRegistry:
         registry = ToolRegistry()

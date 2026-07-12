@@ -14,7 +14,7 @@ from agent.planning import TodoList
 from agent.policy import ToolPolicy
 from agent.tracer import Tracer, cost_report, replay
 from backend.client import DeepSeekBackend
-from eval.planning_ablation import classify_outcome, render_report
+from eval.planning_ablation import classify_outcome, render_report, successful_cached_run
 from tools.base import Tool, ToolRegistry
 from tools.planning import register_planning_tools
 
@@ -252,6 +252,19 @@ class TracerTests(unittest.TestCase):
 
 
 class AblationTests(unittest.TestCase):
+    def test_complete_cache_reuse_counts_as_success_without_rewrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kb = Path(tmp)
+            for name in ("index.md", "metadata.json", "transcript.txt", "chunks.jsonl"):
+                (kb / name).write_text("ok\n", encoding="utf-8")
+            spans = [
+                {"kind": "tool", "name": "video_probe", "ok": True},
+                {"kind": "tool", "name": "read", "ok": True},
+                {"kind": "run", "name": "completed", "ok": True},
+            ]
+            self.assertTrue(successful_cached_run(0, "done", spans, kb))
+            self.assertFalse(successful_cached_run(0, "达到最大轮数", spans, kb))
+
     def test_external_api_errors_are_not_agent_failures(self):
         self.assertEqual(classify_outcome(1, "402 Payment Required", False), "external_error")
         self.assertEqual(classify_outcome(124, "timed out", False), "external_error")

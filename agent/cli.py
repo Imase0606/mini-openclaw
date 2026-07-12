@@ -17,7 +17,7 @@ def selfcheck() -> int:
     ok = True
     try:
         reg = build_default_registry()
-        print(f"[ok] 工具注册表加载成功，当前内置工具数：{len(reg)}（Day5 起会变多）")
+        print(f"[ok] 工具注册表加载成功，当前内置工具数：{len(reg)}")
     except Exception as e:  # noqa
         print(f"[FAIL] 工具注册表：{e}"); ok = False
 
@@ -30,7 +30,7 @@ def selfcheck() -> int:
 
     try:
         from agent.loop import AgentLoop  # noqa
-        print("[ok] 主循环模块可导入（Day5 实现 run 逻辑）")
+        print("[ok] 主循环、停止条件和错误恢复模块可导入")
     except Exception as e:  # noqa
         print(f"[FAIL] 主循环：{e}"); ok = False
 
@@ -57,7 +57,7 @@ def selfcheck() -> int:
         print(f"[FAIL] Textual TUI：{e}"); ok = False
 
     print("== 自检", "通过 ✅" if ok else "未通过 ❌", "==")
-    print("\n下一步：按 dayNN 的 lab-guide 填 # TODO 标记。")
+    print("\nDemo Day 完整验收：python -m eval.demo_check --release")
     return 0 if ok else 1
 
 

@@ -137,12 +137,6 @@ def _web_fetch(url: str, max_tokens: int = 2000) -> str:
     return "[出站策略] 拒绝：重定向次数超过 5 次"
 
 
-# --- task_list（TodoWrite）：自维护待办，提升长任务成功率 ---
-def _task_list(action: str, items: list | None = None) -> str:
-    # TODO[Day7] 维护一个结构化待办（add/update/complete），作为模型的 scratchpad
-    raise NotImplementedError("Day7：实现 task_list")
-
-
 edit_tool = Tool("edit", "编辑文件：把 old 文本替换为 new。",
                  {"type": "object", "properties": {"path": {"type": "string"},
                   "old": {"type": "string"}, "new": {"type": "string"}},
@@ -156,6 +150,3 @@ glob_tool = Tool("glob", "按通配模式查找文件路径。",
 web_fetch_tool = Tool("web_fetch", "抓取出站白名单 URL 并转为 markdown（逐跳校验重定向）。",
                       {"type": "object", "properties": {"url": {"type": "string"}},
                        "required": ["url"]}, _web_fetch)
-task_list_tool = Tool("task_list", "维护任务待办清单（add/update/complete）。",
-                      {"type": "object", "properties": {"action": {"type": "string"},
-                       "items": {"type": "array"}}, "required": ["action"]}, _task_list)

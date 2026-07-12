@@ -42,7 +42,7 @@ def json_valid_rate(raw_outputs: list[str]) -> float:
     """raw_outputs：模型为每条用例生成的 <tool_call>{...}</tool_call> 原文。"""
     ok = 0
     for out in raw_outputs:
-        # TODO[Day3] 抽出 {...} 部分尝试 json.loads（可复用 prompt.render.parse_tool_calls）
+        # Extract and validate the serialized tool-call payload.
         try:
             json.loads(_extract_json(out)); ok += 1
         except Exception:  # noqa

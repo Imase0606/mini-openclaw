@@ -132,7 +132,7 @@ class AgentEventTests(unittest.TestCase):
 class TUITests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def runtime_factory() -> AgentRuntime:
-        return AgentRuntime(trace_enabled=False, enable_mcp=False)
+        return AgentRuntime(backend=FakeBackend(), trace_enabled=False, enable_mcp=False)
 
     async def test_commands_and_multiturn_submission(self):
         app = MiniOpenClawApp(self.runtime_factory)
