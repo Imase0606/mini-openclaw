@@ -1,36 +1,34 @@
-"""文件引用检测：在文本中高亮 file:line 模式。"""
-
+"""Open explicitly selected workspace artifacts with the platform handler."""
 from __future__ import annotations
-import re
-from typing import Iterator
 
-# 匹配各种路径的 file:line 模式
-# 支持: Windows (C:\path\file.py:42), Unix (/path/file.py:42),
-#       相对路径 (path/file.py:42, ./file.py:42, ../file.py:42)
-FILE_REFERENCE_RE = re.compile(
-    r'(?P<path>(?:[A-Za-z]:[\\/][^\s:()]+|[\\/][^\s:()]+|(?:\.\.?[\\/])[^\s:()]+|[a-zA-Z_][a-zA-Z0-9_\-]*[\\/][^\s:()]+))\s*[:(]\s*(?P<line>\d+)'
-)
+import os
+import shutil
+import subprocess
+from pathlib import Path
 
 
-def extract_file_references(text: str) -> list[tuple[str, int]]:
-    """从文本中提取 (路径, 行号) 对。"""
-    results = []
-    for match in FILE_REFERENCE_RE.finditer(text):
-        path = match.group("path")
-        line = int(match.group("line"))
-        results.append((path, line))
-    return results
-
-
-def highlight_references(text: str) -> str:
-    """将 file:line 模式替换为高亮 Rich 标记。
-
-    由于 Textual 的 RichLog 支持 Rich 标记，
-    我们用 [cyan underline] 高亮文件引用。
-    """
-    def _replace(m: re.Match) -> str:
-        path = m.group("path")
-        line = m.group("line")
-        return f"[cyan underline]{path}:{line}[/cyan underline]"
-
-    return FILE_REFERENCE_RE.sub(_replace, text)
+def open_artifact(path: str, root: Path | None = None) -> tuple[bool, str]:
+    workspace = (root or Path.cwd()).resolve()
+    candidate = (workspace / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
+    try:
+        candidate.relative_to(workspace)
+    except ValueError:
+        return False, "refused to open a file outside the workspace"
+    if not candidate.is_file():
+        return False, f"file does not exist: {candidate}"
+    try:
+        if os.name == "nt":
+            os.startfile(candidate)  # type: ignore[attr-defined]
+        else:
+            opener = shutil.which("wslview") or shutil.which("xdg-open")
+            if not opener:
+                return False, f"no system opener is available: {candidate}"
+            subprocess.Popen(
+                [opener, str(candidate)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+    except OSError as exc:
+        return False, f"open failed: {exc}"
+    return True, str(candidate)

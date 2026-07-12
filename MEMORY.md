@@ -18,4 +18,5 @@
 
 ## 已知边界
 - 第一版只处理无需登录的 B站公开视频，不绕过会员、登录、私密或地区限制。
-- 正式课程验收入口是 CLI；Textual TUI 尚未接入最新记忆、规划和 trace 状态。
+- CLI 与 Textual TUI 共用 `AgentRuntime`；TUI 已接入记忆、规划、权限、Skill、MCP、视频策略和 trace。
+- TUI 会话仅保存脱敏文字和工作区内产物路径；图片 Base64、密钥和完整运行媒体不持久化。

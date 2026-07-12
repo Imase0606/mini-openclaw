@@ -241,10 +241,21 @@ def _probe(url: str = "") -> str:
     job = _job_dir(metadata["bvid"])
     metadata_path = job / "metadata.json"
     metadata_path.write_text(_json(metadata), encoding="utf-8")
+    index_path = job / "index.md"
+    transcript_path = job / "transcript.txt"
+    chunks_path = job / "chunks.jsonl"
+    knowledge_base_ready = all(
+        path.is_file() and path.stat().st_size > 0
+        for path in (index_path, transcript_path, chunks_path)
+    )
     brief = {
         "ok": True,
         "message": "已获取 B站公开 API 元数据",
         "metadata_path": str(metadata_path),
+        "knowledge_base_ready": knowledge_base_ready,
+        "index_path": str(index_path) if knowledge_base_ready else "",
+        "transcript_path": str(transcript_path) if knowledge_base_ready else "",
+        "chunks_path": str(chunks_path) if knowledge_base_ready else "",
         "metadata": metadata,
     }
     return _json(brief)
@@ -916,7 +927,7 @@ video_frame_ocr_tool = Tool(
 
 kb_write_tool = Tool(
     "kb_write",
-    "将 transcript/visual_notes/metadata 写成 Markdown 知识库和 RAG-ready chunks.jsonl。",
+    "将 transcript/visual_notes/metadata 写成 Markdown 知识库。禁止空参数调用；B站流程必须传 source_url、transcript_path、metadata_path、content_digest、key_points 和 video_type。",
     {
         "type": "object",
         "properties": {

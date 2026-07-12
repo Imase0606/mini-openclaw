@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
 from agent.context import maybe_compact, truncate_observation
+from agent.events import AgentEvent, RunResult
 from agent.planning import TodoList
 from agent.policy import ToolPolicy
 from agent.tracer import Tracer
@@ -29,10 +31,14 @@ class AgentLoop:
         max_turns: int = 40,
         tool_policy: ToolPolicy | None = None,
         auto_approve: bool = False,
+        auto_approve_tools: set[str] | None = None,
         confirm_callback: Callable[[str, dict[str, Any]], bool] | None = None,
         todo: TodoList | None = None,
         planning_mode: str = "auto",
         tracer: Tracer | None = None,
+        event_sink: Callable[[AgentEvent], None] | None = None,
+        cancel_event: threading.Event | None = None,
+        run_id: str = "",
     ) -> None:
         self.backend = backend
         self.registry = registry
@@ -40,24 +46,45 @@ class AgentLoop:
         self.max_turns = max(1, min(int(max_turns), 100))
         self.tool_policy = tool_policy or ToolPolicy()
         self.auto_approve = auto_approve
+        self.auto_approve_tools = set(auto_approve_tools or ())
         self.confirm_callback = confirm_callback
         self.todo = todo
         self.planning_mode = planning_mode
         self.tracer = tracer
+        self.event_sink = event_sink
+        self.cancel_event = cancel_event or threading.Event()
+        self.run_id = run_id
         self.tool_schemas = self.tool_policy.schemas(self.registry)
         self._recent_actions: deque[str] = deque(maxlen=2)
         self._reflection_counts: dict[int, int] = {}
         self._terminal_success = False
+        self.last_result: RunResult | None = None
 
     def run(self, user_task: str | list[dict[str, Any]]) -> str:
+        return self.run_turn(user_task).content
+
+    def run_turn(
+        self,
+        user_task: str | list[dict[str, Any]],
+        history: list[dict[str, Any]] | None = None,
+    ) -> RunResult:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
+            *[
+                dict(message) for message in (history or [])
+                if message.get("role") in {"user", "assistant", "tool"} or message.get("_history_memo")
+            ],
             {"role": "user", "content": user_task},
         ]
         stagnant_rounds = 0
         premature_finals = 0
+        empty_responses = 0
+        self._emit("status", status="thinking")
 
         for turn in range(1, self.max_turns + 1):
+            if self.cancel_event.is_set():
+                return self._finish(messages, "任务已取消。", "cancelled", turn - 1)
+            self._emit("turn_started", turn=turn)
             request_messages = list(messages)
             if self.todo is not None and self.todo.items:
                 request_messages.append({
@@ -80,6 +107,22 @@ class AgentLoop:
 
             tool_calls = assistant.get("tool_calls") or []
             if not tool_calls:
+                result = str(assistant.get("content") or "")
+                if not result.strip():
+                    if empty_responses == 0:
+                        empty_responses = 1
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "上一次响应为空且没有工具调用。请继续当前任务：给出有效答复，"
+                                "或调用完成任务所需的工具；不要再次返回空响应。"
+                            ),
+                        })
+                        continue
+                    result = "模型连续返回空响应，任务已停止。请重试或切换模型。"
+                    self._record_run_end("empty_response", result, turn)
+                    return self._finish(messages, result, "empty_response", turn)
+                empty_responses = 0
                 if self._must_continue_planning() and premature_finals < 2:
                     premature_finals += 1
                     messages.append({
@@ -87,15 +130,26 @@ class AgentLoop:
                         "content": "规划尚未完成，不能直接结束。请列出或推进 Todo；无法继续则标记 blocked 并汇报原因。",
                     })
                     continue
-                result = assistant.get("content", "")
                 self._record_run_end("completed", result, turn)
-                return result
+                return self._finish(messages, result, "completed", turn)
+
+            empty_responses = 0
 
             version_before = self.todo.version if self.todo is not None else 0
             reflection_messages: list[str] = []
             for call in tool_calls:
+                if self.cancel_event.is_set():
+                    return self._finish(messages, "任务已取消。", "cancelled", turn)
                 call_name = call.get("name") or ""
                 arguments = call.get("arguments", {})
+                call_id = call.get("id") or f"call-{turn}-{len(messages)}"
+                self._emit(
+                    "tool_started",
+                    call_id=call_id,
+                    name=call_name,
+                    arguments=self._event_arguments(arguments),
+                )
+                tool_started = time.perf_counter()
                 signature = json.dumps(
                     {"name": call_name, "arguments": arguments},
                     ensure_ascii=False,
@@ -136,6 +190,18 @@ class AgentLoop:
                 else:
                     obs, failed = self._execute_tool(call_name, arguments)
 
+                outcome = "denied" if str(obs).startswith("[权限层]") else "error" if failed else "done"
+                self._emit(
+                    "tool_finished",
+                    call_id=call_id,
+                    name=call_name,
+                    status=outcome,
+                    result=str(obs)[:4000],
+                    duration_ms=round((time.perf_counter() - tool_started) * 1000),
+                )
+                self._emit("status", status="thinking")
+                self._emit_artifacts(call_name, str(obs))
+
                 read_name = Path(str(arguments.get("path", ""))).name.lower()
                 observation_limit = (
                     80_000
@@ -167,6 +233,7 @@ class AgentLoop:
                     stagnant_rounds += 1
                 else:
                     stagnant_rounds = 0
+                    self._emit("todo_changed", items=self.todo.snapshot(), rendered=self.todo.render())
                 if stagnant_rounds == 4:
                     messages.append({
                         "role": "system",
@@ -176,28 +243,89 @@ class AgentLoop:
                     self.todo.mark_current_blocked()
                     result = "[规划层] 连续 8 轮无 Todo 进展，已停止。\n" + self.todo.render()
                     self._record_run_end("no_progress", result, turn)
-                    return result
+                    return self._finish(messages, result, "no_progress", turn)
 
             messages = maybe_compact(messages, backend=self.backend, budget=6000)
 
         progress = "\n" + self.todo.render() if self.todo is not None and self.todo.items else ""
         result = f"[达到最大轮数上限（{self.max_turns}/{self.max_turns} 轮），未完成任务]{progress}"
         self._record_run_end("max_turns", result, self.max_turns)
-        return result
+        return self._finish(messages, result, "max_turns", self.max_turns)
 
     def _call_llm(self, messages: list[dict[str, Any]], turn: int, prefix_chars: int) -> dict[str, Any]:
+        if self.event_sink is not None and hasattr(self.backend, "chat_stream"):
+            return self._call_llm_stream(messages, turn, prefix_chars)
         fn = lambda: self.backend.chat(messages, tools=self.tool_schemas)
         if self.tracer is None:
-            return fn()
-        return self.tracer.call(
+            result = fn()
+        else:
+            result = self.tracer.call(
             "llm",
             "decide",
             fn,
             input_data={"turn": turn, "messages": len(messages), "tools": len(self.tool_schemas)},
-            meta={"turn": turn, "prefix_chars": prefix_chars},
+            meta={"turn": turn, "prefix_chars": prefix_chars, "run_id": self.run_id},
         )
+        content = result.get("content", "")
+        if content:
+            self._emit("text_delta", text=content)
+        self._emit("usage", **(result.get("usage") or {}))
+        return result
+
+    def _call_llm_stream(
+        self,
+        messages: list[dict[str, Any]],
+        turn: int,
+        prefix_chars: int,
+    ) -> dict[str, Any]:
+        started = time.perf_counter()
+        content = ""
+        tool_calls: list[dict[str, Any]] = []
+        usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        ok = True
+        error = ""
+        try:
+            for chunk in self.backend.chat_stream(messages, tools=self.tool_schemas):
+                if self.cancel_event.is_set():
+                    break
+                kind = chunk.get("type")
+                if kind == "content":
+                    delta = str(chunk.get("delta") or "")
+                    content += delta
+                    self._emit("text_delta", text=delta)
+                elif kind == "tool_call":
+                    tool_calls.append({
+                        "id": chunk.get("id"),
+                        "name": chunk.get("name"),
+                        "arguments": chunk.get("arguments") or {},
+                    })
+                elif kind == "usage":
+                    usage = {
+                        "prompt_tokens": int(chunk.get("prompt_tokens") or 0),
+                        "completion_tokens": int(chunk.get("completion_tokens") or 0),
+                        "total_tokens": int(chunk.get("total_tokens") or 0),
+                    }
+                    self._emit("usage", **usage)
+        except Exception as exc:
+            ok = False
+            error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            if self.tracer:
+                self.tracer.record(
+                    "llm",
+                    "decide",
+                    ok=ok,
+                    ms=round((time.perf_counter() - started) * 1000),
+                    input_data={"turn": turn, "messages": len(messages), "tools": len(self.tool_schemas)},
+                    output={"content": content, "tool_calls": tool_calls} if ok else error,
+                    usage=usage,
+                    meta={"turn": turn, "prefix_chars": prefix_chars, "run_id": self.run_id},
+                )
+        return {"role": "assistant", "content": content, "tool_calls": tool_calls, "usage": usage}
 
     def _execute_tool(self, name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
+        self._emit("status", status="executing", tool=name)
         verdict, reason = self.tool_policy.authorize(name, arguments)
         tool = self.registry.get(name)
         if verdict == "deny":
@@ -231,6 +359,8 @@ class AgentLoop:
                 failed = any(marker in str(obs) for marker in FAILURE_MARKERS)
                 if not failed and name == "kb_write":
                     self._terminal_success = True
+                self.tool_policy.observe(name, str(obs))
+                self._emit("status", status="thinking")
                 return wrapped, failed
             except Exception as exc:
                 transient = self._is_transient(exc)
@@ -271,7 +401,7 @@ class AgentLoop:
         )
 
     def _confirmed(self, name: str, arguments: dict[str, Any]) -> bool:
-        if self.auto_approve:
+        if self.auto_approve or name in self.auto_approve_tools:
             return True
         if self.confirm_callback is None:
             return False
@@ -299,6 +429,56 @@ class AgentLoop:
                 output=output,
                 meta={
                     "turn": turn,
+                    "run_id": self.run_id,
                     "todo": self.todo.snapshot() if self.todo is not None else [],
                 },
             )
+
+    def _finish(
+        self,
+        messages: list[dict[str, Any]],
+        content: str,
+        status: str,
+        turns: int,
+    ) -> RunResult:
+        history = [
+            dict(message) for message in messages[1:]
+            if message.get("role") != "system" or message.get("_history_memo")
+        ]
+        result = RunResult(content=content, messages=history, status=status, turns=turns)
+        self.last_result = result
+        self._emit("status", status="done" if status == "completed" else status)
+        self._emit("run_finished", content=content, status=status, turns=turns)
+        return result
+
+    def _emit(self, kind: str, **data: Any) -> None:
+        if self.event_sink is None:
+            return
+        try:
+            self.event_sink(AgentEvent(kind, {"run_id": self.run_id, **data}))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _event_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        visible = {}
+        for key, value in arguments.items():
+            if key.lower() in {"api_key", "token", "password", "secret", "data", "image"}:
+                visible[key] = "[REDACTED]"
+            elif isinstance(value, str) and len(value) > 500:
+                visible[key] = value[:500] + "..."
+            else:
+                visible[key] = value
+        return visible
+
+    def _emit_artifacts(self, tool_name: str, observation: str) -> None:
+        if tool_name != "kb_write":
+            return
+        try:
+            payload = json.loads(observation)
+        except json.JSONDecodeError:
+            return
+        for key in ("markdown_path", "metadata_path", "transcript_path", "visual_notes_path", "chunks_path"):
+            path = payload.get(key)
+            if path:
+                self._emit("artifact", kind_name=key, path=str(path))

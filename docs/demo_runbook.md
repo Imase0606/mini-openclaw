@@ -8,6 +8,8 @@ python -m agent.cli --selfcheck
 python -m eval.demo_check
 ```
 
+随后运行 `mini-openclaw`，演示 `/resume`、`/compact`、`/model`、`Shift+Tab` 权限切换、忙碌任务排队和 `Ctrl+B` 详情抽屉；CLI 继续用于自动化验收。输入 `!echo hello` 展示直接 Shell 仍需确认，再切换 plan 模式证明该命令会被执行层拒绝。
+
 用 3-5 分钟结合 `docs/architecture.md` 说明 backend、主循环、工具、MCP、Skill、安全、记忆、规划和 trace。
 
 ## 1. 跨会话记忆

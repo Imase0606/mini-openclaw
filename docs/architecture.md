@@ -36,4 +36,6 @@ flowchart TD
 
 ## 当前界面边界
 
-正式验收入口是 `python -m agent.cli`。Textual TUI 使用独立流式链路，尚未同步 Day7-Day9 的记忆、规划与 trace 状态。
+`python -m agent.cli` 与 `mini-openclaw` 都通过共享 `AgentRuntime` 组装 backend、工具、MCP、Skill、Memory、Todo、权限策略和 trace。TUI 使用 `AgentLoop` 的结构化事件显示流式文本、工具状态和产物，不再维护独立 ReAct 循环。
+
+TUI 会话经脱敏和限长后原子写入 `.mini-openclaw/sessions/`，不持久化图片 Base64 或密钥。模型切换只接受环境变量配置的白名单别名。`!command` 也进入统一 `ToolPolicy -> confirm/deny -> bubblewrap -> trace` 链路，不存在绕过模型就绕过安全层的旁路。

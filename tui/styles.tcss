@@ -1,107 +1,446 @@
-/* mini-openclaw TUI 样式表 */
-
 Screen {
-    background: $surface;
+    background: #0b0d0e;
+    color: #e7e2dc;
 }
 
-/* 状态栏 */
-StatusBar {
-    dock: top;
-    height: 1;
-    background: $panel;
-    color: $text;
-    padding: 0 1;
+#workspace {
+    height: 1fr;
 }
 
-/* 对话容器 */
 ChatContainer {
-    overflow-y: scroll;
-    overflow-x: auto;
-    border: solid $primary;
-    margin: 0 1;
+    width: 1fr;
+    padding: 0 2 1 2;
+    scrollbar-color: #51565b;
+    scrollbar-color-hover: #6b7278;
+    scrollbar-color-active: #ff928b;
 }
 
 MessageList {
     height: auto;
 }
 
-/* 用户消息 */
-UserMessage {
-    background: $surface;
-    border: solid $primary;
+WelcomePanel {
+    width: 1fr;
+    height: 15;
     margin: 1 0;
     padding: 0 1;
+    border: round #d87875;
+    border-title-color: #ff928b;
+    border-title-background: #0b0d0e;
+    background: #111314;
 }
 
-/* 助手消息 */
-AssistantMessage {
-    background: $surface-darken-1;
-    border: solid $secondary;
-    margin: 1 0;
-    padding: 0 1;
+.welcome-columns {
+    width: 1fr;
+    height: 1fr;
 }
 
-/* 输入框 */
-PromptInput {
-    dock: bottom;
+.welcome-left {
+    width: 42%;
+    height: 1fr;
+    padding: 0 2;
+    border-right: solid #3d4246;
+    content-align: center middle;
+}
+
+.welcome-right {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 2;
+}
+
+.welcome-greeting {
+    height: 2;
+    color: #f3eee8;
+    text-style: bold;
+    content-align: center middle;
+}
+
+.welcome-logo {
     height: 5;
-    border: solid $primary;
+    color: #63d4ed;
+    text-style: bold;
+    content-align: center middle;
+}
+
+#welcome-model {
+    height: 1;
+    color: #63d4ed;
+    text-style: bold;
+    content-align: center middle;
+    text-overflow: ellipsis;
+}
+
+#welcome-workdir, #welcome-permission {
+    height: 1;
+    color: #91979c;
+    content-align: center middle;
+    text-overflow: ellipsis;
+}
+
+.welcome-heading {
+    height: 2;
+    padding: 0;
+    color: #ff928b;
+    text-style: bold;
+    border-bottom: solid #6b4141;
+    content-align: left middle;
+}
+
+.quick-start, .recent-sessions {
+    height: auto;
+    padding-top: 1;
+    color: #d9d5d0;
+}
+
+.quick-start {
+    color: #ddd8d2;
+}
+
+.recent-sessions {
+    color: #9ca2a7;
+}
+
+UserMessage {
+    height: auto;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    color: #f3eee8;
+}
+
+SystemMessage {
+    height: auto;
+    margin: 1 1 0 2;
+    color: #90969b;
+}
+
+.notice-success {
+    color: #78d6a3;
+}
+
+.notice-warning {
+    color: #e7bd72;
+}
+
+.notice-error, .notice-denied {
+    color: #ff928b;
+}
+
+AssistantMessage {
+    height: auto;
+    margin: 1 0 1 0;
+    padding: 0 1;
+}
+
+AssistantMessage Markdown {
+    height: auto;
+    color: #e7e2dc;
+    background: #0b0d0e;
+}
+
+.activity-line {
+    height: auto;
+    margin: 1 0 0 0;
+    color: #b4b0ab;
+}
+
+ToolCallCard {
+    height: auto;
+    margin: 1 0 0 1;
+    padding: 0 1;
+    color: #b6bcc1;
+    background: #0b0d0e;
+    border-left: solid #555b60;
+}
+
+ToolCallCard.tool-done {
+    border-left: solid #4f9d73;
+}
+
+ToolCallCard.tool-denied, ToolCallCard.tool-error {
+    border-left: solid #c76866;
+}
+
+.tool-details {
+    width: 1fr;
+    height: auto;
+}
+
+.tool-arguments {
+    height: auto;
+    max-height: 12;
+    padding-left: 1;
+    color: #9da3a8;
+    background: #111314;
+    overflow-y: auto;
+}
+
+.tool-result {
+    height: auto;
+    max-height: 16;
+    padding-left: 1;
+    color: #c9c5c0;
+    background: #111314;
+    overflow-y: auto;
+}
+
+SidePanel {
+    width: 34;
+    padding: 1 2;
+    color: #c9c5c0;
+    background: #101213;
+    border-left: solid #383d41;
+    overflow-y: auto;
+}
+
+.drawer-closed SidePanel {
+    display: none;
+}
+
+.drawer-open SidePanel {
+    display: block;
+}
+
+.side-title {
+    height: 2;
+    padding-top: 1;
+    color: #ff928b;
+    text-style: bold;
+}
+
+#todo-content, #artifact-content, #setting-content, #trace-content {
+    height: auto;
+    color: #aeb3b7;
+}
+
+#completion-menu {
+    width: 1fr;
+    height: auto;
+    max-height: 10;
+    margin: 0 2;
+    color: #ded9d3;
+    background: #151718;
+    border: round #555b60;
+}
+
+#completion-menu > .option-list--option-highlighted {
+    color: #0b0d0e;
+    background: #ff928b;
+    text-style: bold;
+}
+
+Composer {
+    width: 1fr;
+    height: auto;
+    min-height: 7;
     margin: 0 1 1 1;
+    padding: 0 1;
+    background: #101213;
+    border: round #555b60;
+}
+
+Composer:focus-within {
+    border: round #d87875;
+}
+
+Composer.permission-accept-edits {
+    border: round #4f9d73;
+}
+
+Composer.permission-plan {
+    border: round #4ca9bd;
+}
+
+#composer-input-row {
+    width: 1fr;
+    height: 4;
+}
+
+#prompt-mark {
+    width: 3;
+    height: 3;
+    padding: 0;
+    color: #ff928b;
+    text-style: bold;
+    content-align: center top;
+}
+
+PromptInput {
+    width: 1fr;
+    height: 4;
+    border: none;
+    padding: 0;
+    color: #f1ece6;
+    background: #101213;
 }
 
 PromptInput:focus {
-    border: solid $accent;
+    border: none;
 }
 
-/* 工具调用卡片 */
-ToolCallCard {
-    margin: 0 2 1 2;
-    border: solid $secondary 30%;
+#attachment-line {
+    height: 1;
+    padding-left: 3;
+    color: #63d4ed;
+    background: #101213;
+    text-overflow: ellipsis;
 }
 
-ToolCallCard > Vertical > Static {
-    margin: 0 1;
+#composer-footer {
+    width: 1fr;
+    height: 1;
+    color: #858b90;
 }
 
-ToolCallCard #result-content {
-    background: $surface;
-    padding: 0 1;
-    border: dashed $secondary 20%;
+#composer-status {
+    width: 1fr;
+    height: 1;
+    text-overflow: ellipsis;
 }
 
-/* 权限弹窗 */
-PermissionModal {
+#composer-hint {
+    width: auto;
+    height: 1;
+    color: #70767b;
+    text-align: right;
+}
+
+PermissionModal, ChoiceModal {
     align: center middle;
+    background: #000000 65%;
 }
 
-#perm-dialog {
-    width: 60;
+#permission-dialog, #choice-dialog {
+    width: 70;
     height: auto;
+    max-height: 30;
     padding: 1 2;
-    background: $surface;
-    border: thick $warning;
+    color: #e7e2dc;
+    background: #111314;
+    border: round #d87875;
 }
 
-#perm-title {
-    text-align: center;
-    text-style: bold;
+#permission-title, #choice-title {
+    height: 2;
     margin-bottom: 1;
+    color: #ff928b;
+    text-style: bold;
+    border-bottom: solid #6b4141;
 }
 
-#perm-args {
+#permission-arguments {
+    max-height: 14;
     margin: 1 0;
+    padding: 1;
+    color: #b8bdc1;
+    background: #0b0d0e;
+    overflow-y: auto;
 }
 
-#perm-warning {
-    color: $error;
-    margin: 1 0;
-}
-
-#perm-buttons {
+#permission-actions {
+    height: 3;
     align: center middle;
-    margin-top: 1;
 }
 
-#perm-buttons Button {
+#permission-actions Button {
     margin: 0 1;
+}
+
+#permission-allow {
+    color: #0b0d0e;
+    background: #78d6a3;
+}
+
+#permission-deny {
+    color: #0b0d0e;
+    background: #ff928b;
+}
+
+#choice-options {
+    height: auto;
+    max-height: 22;
+    color: #ded9d3;
+    background: #111314;
+}
+
+#choice-options > .option-list--option-highlighted {
+    color: #0b0d0e;
+    background: #ff928b;
+}
+
+.narrow #workspace {
+    layout: vertical;
+}
+
+.narrow WelcomePanel {
+    height: 19;
+}
+
+.narrow .welcome-columns {
+    layout: vertical;
+}
+
+.narrow .welcome-left {
+    width: 1fr;
+    height: 11;
+    padding: 0 1;
+    border-right: none;
+    border-bottom: solid #3d4246;
+}
+
+.narrow .welcome-right {
+    width: 1fr;
+    height: 6;
+    padding: 0 1;
+}
+
+.narrow .recent-heading, .narrow .recent-sessions {
+    display: none;
+}
+
+.narrow.drawer-open SidePanel {
+    width: 1fr;
+    height: 11;
+    border-left: none;
+    border-top: solid #383d41;
+    layout: horizontal;
+}
+
+.narrow SidePanel Static {
+    width: 1fr;
+    margin-right: 1;
+}
+
+.narrow #composer-hint {
+    display: none;
+}
+
+.compact ChatContainer {
+    padding: 0 1;
+}
+
+.compact WelcomePanel {
+    height: 12;
+    margin-top: 0;
+}
+
+.compact .welcome-left {
+    height: 1fr;
+    border-bottom: none;
+}
+
+.compact .welcome-right {
+    display: none;
+}
+
+.compact #completion-menu {
+    margin: 0 1;
+}
+
+.compact Composer {
+    margin: 0 0 0 0;
+}
+
+.compact #composer-status {
+    width: 1fr;
 }

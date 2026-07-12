@@ -11,6 +11,40 @@ from __future__ import annotations
 from typing import Any
 
 
+TRANSIENT_PLANNING_TOOLS = frozenset({"todo_write", "update_todo", "insert_todo"})
+
+
+def strip_transient_planning_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove run-scoped planning transactions before a later user turn."""
+    planning_call_ids: set[str] = set()
+    cleaned: list[dict[str, Any]] = []
+    for message in history:
+        role = message.get("role")
+        if role == "assistant" and isinstance(message.get("tool_calls"), list):
+            kept_calls = []
+            for call in message["tool_calls"]:
+                if not isinstance(call, dict):
+                    continue
+                name = str(call.get("name") or (call.get("function") or {}).get("name") or "")
+                if name in TRANSIENT_PLANNING_TOOLS:
+                    if call.get("id"):
+                        planning_call_ids.add(str(call["id"]))
+                else:
+                    kept_calls.append(call)
+            copy = dict(message)
+            copy["tool_calls"] = kept_calls
+            if str(copy.get("content") or "").strip() or kept_calls:
+                cleaned.append(copy)
+            continue
+        if role == "tool":
+            name = str(message.get("name") or "")
+            call_id = str(message.get("tool_call_id") or "")
+            if name in TRANSIENT_PLANNING_TOOLS or call_id in planning_call_ids:
+                continue
+        cleaned.append(dict(message))
+    return cleaned
+
+
 def _content_for_history(content: Any) -> str:
     if not isinstance(content, list):
         return str(content or "")
@@ -89,10 +123,22 @@ def maybe_compact(
 
     summary = _summarize(backend, chunk_to_summarize)
 
-    memo: dict[str, str] = {"role": "system", "content": summary}
+    memo: dict[str, Any] = {"role": "system", "content": summary, "_history_memo": True}
     compacted: list[dict[str, Any]] = [system, memo] + messages[split_idx:]
 
     return compacted
+
+
+def compact_history(history: list[dict[str, Any]], backend: Any, keep_rounds: int = 2) -> list[dict[str, Any]]:
+    """Force a manual compaction while preserving the most recent assistant rounds."""
+    messages = [{"role": "system", "content": "history"}, *history]
+    assistant_indices = [index for index, item in enumerate(messages) if item.get("role") == "assistant"]
+    if len(assistant_indices) <= keep_rounds:
+        return history
+    split_index = assistant_indices[-keep_rounds]
+    summary = _summarize(backend, messages[1:split_index])
+    memo = {"role": "system", "content": summary, "_history_memo": True}
+    return [memo, *messages[split_index:]]
 
 
 def truncate_observation(text: str, max_chars: int = 4000) -> str:

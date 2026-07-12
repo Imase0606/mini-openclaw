@@ -10,6 +10,8 @@ description: 当用户提供 B站 Bilibili b23.tv BV 视频链接、字幕或文
 ## 工作流
 
 1. 调用 `video_probe` 获取标题、UP主、简介、发布时间、时长、BV 号和分 P 信息。
+   - 若返回 `knowledge_base_ready=true`，且用户没有明确要求刷新、重新转写、重新 OCR 或更换视频类型模板，立即调用 `read` 读取返回的 `index_path`，然后直接返回已有知识库摘要和文件路径；不要再次调用 `video_transcribe` 或 `kb_write`。
+   - 只有知识库未就绪或用户明确要求重新生成时，才继续以下完整流程。
 2. 调用一次 `video_transcribe`：
    - 优先使用字幕；没有字幕时使用 faster-whisper 本地 ASR。
    - 多分 P 视频会自动保存 `transcript_pN.txt` 并合并为 `transcript.txt`。不要自行拼接 `?p=N` 重复调用或移动分稿。

@@ -2,31 +2,31 @@
 
 from __future__ import annotations
 from pathlib import Path
+from typing import Callable
 
 from textual.app import App
 from textual.binding import Binding
 
+from agent.runtime import AgentRuntime
 from tui.screens import MainScreen
-from tui.status_bar import LOGO_ART
 
 
 class MiniOpenClawApp(App):
     """Textual TUI 主应用。"""
 
     TITLE = "mini-openclaw"
-    SUB_TITLE = "惊讶！让 AI 帮你搞定任务！"
+    SUB_TITLE = "video knowledge terminal"
 
     CSS = (Path(__file__).parent / "styles.tcss").read_text(encoding="utf-8")
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", "退出"),
-        Binding("escape", "cancel", "取消"),
+        Binding("ctrl+d", "quit", "Quit"),
     ]
 
-    SCREENS = {
-        "main": MainScreen,
-    }
+    def __init__(self, runtime_factory: Callable[[], AgentRuntime] | None = None) -> None:
+        super().__init__()
+        self.runtime_factory = runtime_factory or (lambda: AgentRuntime(trace_prefix="tui"))
 
     def on_mount(self) -> None:
         """应用启动时进入主屏幕。"""
-        self.push_screen("main")
+        self.push_screen(MainScreen(self.runtime_factory))

@@ -19,6 +19,7 @@ class PromptInput(TextArea):
 
     BINDINGS = [
         Binding("enter", "submit", "Submit", priority=True),
+        Binding("tab", "complete", "Complete", priority=True),
     ]
 
     class Submitted(Message):
@@ -27,10 +28,13 @@ class PromptInput(TextArea):
             super().__init__()
             self.text = text
 
+    class CompletionRequested(Message):
+        pass
+
     def __init__(self) -> None:
         super().__init__(
             id="prompt-input",
-            placeholder="输入任务描述给 mini-openclaw...",
+            placeholder="Ask mini-openclaw...",
         )
         self._history: list[str] = []
         self._history_index: int = -1
@@ -43,3 +47,6 @@ class PromptInput(TextArea):
         self._history_index = len(self._history)
         self.post_message(self.Submitted(text))
         self.clear()
+
+    def action_complete(self) -> None:
+        self.post_message(self.CompletionRequested())

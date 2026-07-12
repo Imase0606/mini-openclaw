@@ -41,3 +41,13 @@ class FakeBackend:
             }
         return {"role": "assistant", "content": "[FakeBackend] 你好，我是离线占位后端。配好 DEEPSEEK_API_KEY 即用真模型。", "tool_calls": [],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+
+    def chat_stream(self, messages, tools=None, temperature: float = 0.0):  # noqa: ARG002
+        result = self.chat(messages, tools)
+        content = result.get("content", "")
+        if content:
+            yield {"type": "content", "delta": content}
+        for call in result.get("tool_calls") or []:
+            yield {"type": "tool_call", **call}
+        yield {"type": "usage", **result.get("usage", {})}
+        yield {"type": "done"}

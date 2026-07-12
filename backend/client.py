@@ -18,7 +18,7 @@ DeepSeek 的接口与 OpenAI 完全兼容，所以下面用通用的 OpenAI 协�
 from __future__ import annotations
 import os
 import json
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 
@@ -39,6 +39,11 @@ class DeepSeekBackend:
             timeout=httpx.Timeout(request_timeout, connect=min(20.0, request_timeout)),
         )
 
+    @property
+    def chat_completions_url(self) -> str:
+        suffix = "/chat/completions" if self.base_url.endswith("/v1") else "/v1/chat/completions"
+        return self.base_url + suffix
+
     def chat(self, messages: list[dict[str, Any]], tools: list[dict] | None = None,
              temperature: float = 0.0) -> dict[str, Any]:
         """一次（非流式）对话补全，返回归一化的 assistant 消息。"""
@@ -53,7 +58,7 @@ class DeepSeekBackend:
 
         has_images = any(self._content_has_image(message.get("content")) for message in messages)
         resp = self._client.post(
-            f"{self.base_url}/v1/chat/completions",
+            self.chat_completions_url,
             headers={"Authorization": f"Bearer {self.api_key}"},
             json=payload,
         )
@@ -79,6 +84,89 @@ class DeepSeekBackend:
         }
         normalized["model"] = payload_out.get("model") or self.model
         return normalized
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        temperature: float = 0.0,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield normalized text, tool-call and usage events from OpenAI SSE."""
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": self._to_openai_messages(messages),
+            "temperature": temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        accumulated: dict[int, dict[str, Any]] = {}
+        emitted = False
+        with self._client.stream(
+            "POST",
+            self.chat_completions_url,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json=payload,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                raw = line[6:].strip()
+                if raw == "[DONE]":
+                    break
+                try:
+                    packet = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                usage = packet.get("usage") or {}
+                if usage:
+                    yield {
+                        "type": "usage",
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                        "total_tokens": usage.get("total_tokens", 0),
+                    }
+                for choice in packet.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    if delta.get("content"):
+                        yield {"type": "content", "delta": delta["content"]}
+                    for fragment in delta.get("tool_calls") or []:
+                        index = int(fragment.get("index") or 0)
+                        entry = accumulated.setdefault(index, {
+                            "id": fragment.get("id") or f"call_{index}",
+                            "name": "",
+                            "arguments": "",
+                        })
+                        if fragment.get("id"):
+                            entry["id"] = fragment["id"]
+                        function = fragment.get("function") or {}
+                        entry["name"] += function.get("name") or ""
+                        entry["arguments"] += function.get("arguments") or ""
+                    if choice.get("finish_reason") == "tool_calls":
+                        yield from self._stream_tool_calls(accumulated)
+                        emitted = True
+        if accumulated and not emitted:
+            yield from self._stream_tool_calls(accumulated)
+        yield {"type": "done"}
+
+    @staticmethod
+    def _stream_tool_calls(accumulated: dict[int, dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        for index in sorted(accumulated):
+            entry = accumulated[index]
+            try:
+                arguments = json.loads(entry["arguments"] or "{}")
+            except json.JSONDecodeError:
+                arguments = {}
+            yield {
+                "type": "tool_call",
+                "id": entry["id"],
+                "name": entry["name"],
+                "arguments": arguments,
+            }
 
     # --- 把内部 messages（含 role=tool）转成 OpenAI 标准格式 ---
     def _to_openai_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

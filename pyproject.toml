@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-openclaw"
+version = "0.2.0"
+description = "A secure terminal agent for video knowledge extraction"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.scripts]
+mini-openclaw = "tui.__main__:main"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+include = ["agent*", "backend*", "eval*", "mcp*", "prompt*", "security*", "skills*", "tools*", "tui*"]
+
+[tool.setuptools.package-data]
+tui = ["*.tcss", "assets/*.png"]

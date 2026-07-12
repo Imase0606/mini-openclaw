@@ -17,6 +17,7 @@ VIDEO_TOOLS = {
     "read", "video_probe", "video_transcribe", "video_frame_ocr", "kb_write",
     "remember", "forget_memory", "recall_memory", "todo_write", "update_todo", "insert_todo",
 }
+PLAN_TOOLS = {"read", "grep", "glob", "recall_memory", "todo_write", "update_todo", "insert_todo", "web_fetch"}
 UNTRUSTED_CONTENT_TOOLS = {"read", "web_fetch", "video_probe", "video_transcribe", "video_frame_ocr"}
 
 
@@ -27,10 +28,12 @@ class ToolPolicy:
         video_mode: bool = False,
         task: str = "",
         workdir: Path | None = None,
+        permission_mode: str = "default",
     ) -> None:
         self.video_mode = video_mode
         self.allowed_bvids = set(BVID_RE.findall(task))
         self.workdir = (workdir or Path.cwd()).resolve()
+        self.permission_mode = permission_mode
 
     def schemas(self, registry: ToolRegistry) -> list[dict[str, Any]]:
         schemas = registry.schemas()
@@ -38,9 +41,16 @@ class ToolPolicy:
             schema for schema in schemas
             if schema.get("function", {}).get("name") in VIDEO_TOOLS
         ]
+        if self.permission_mode == "plan":
+            selected = [
+                schema for schema in selected
+                if schema.get("function", {}).get("name") in PLAN_TOOLS
+            ]
         return sorted(selected, key=lambda schema: schema.get("function", {}).get("name", ""))
 
     def authorize(self, name: str, arguments: dict[str, Any]) -> tuple[permissions.Verdict, str]:
+        if self.permission_mode == "plan" and name not in PLAN_TOOLS:
+            return "deny", f"Plan 模式禁止修改或执行工具：{name}"
         if not self.video_mode:
             verdict = permissions.check(name, arguments, self.workdir)
             reason = {

@@ -1,90 +1,254 @@
-"""聊天区域：可滚动的对话视图 + 用户/助手消息组件。"""
-
+"""Claude-style welcome and conversation widgets."""
 from __future__ import annotations
-from textual.widgets import Static, RichLog, Markdown
-from textual.containers import ScrollableContainer, Vertical
+
+from importlib.metadata import PackageNotFoundError, version
+import time
+
+from rich.text import Text
 from textual.app import ComposeResult
-from rich.markup import escape as rich_escape
+from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.widgets import Markdown, Static
+
+
+KNOWLEDGE_TERMINAL_ASCII = r"""
+   +---------+
+   | >  ===  |
+   | [] ===  |
+   +----+----+
+        |_|
+""".strip("\n")
+
+
+def app_version() -> str:
+    try:
+        return version("mini-openclaw")
+    except PackageNotFoundError:
+        return "0.2.0"
+
+
+class WelcomePanel(Vertical):
+    def __init__(
+        self,
+        model: str,
+        workdir: str,
+        permission: str,
+        recent_sessions: list[tuple[str, str]],
+        release: str,
+    ) -> None:
+        super().__init__()
+        self.model = model
+        self.workdir = workdir
+        self.permission = permission
+        self.recent_sessions = recent_sessions
+        self.release = release
+        self.border_title = f" mini-openclaw v{release} "
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="welcome-columns"):
+            with Vertical(classes="welcome-left"):
+                yield Static("Welcome back!", classes="welcome-greeting")
+                yield Static(KNOWLEDGE_TERMINAL_ASCII, classes="welcome-logo", markup=False)
+                yield Static(self.model, id="welcome-model", markup=False)
+                yield Static(self.workdir, id="welcome-workdir", markup=False)
+                yield Static(f"permission: {self.permission}", id="welcome-permission", markup=False)
+            with Vertical(classes="welcome-right"):
+                yield Static("Quick start", classes="welcome-heading")
+                yield Static(
+                    "[bold]/help[/bold]       Browse commands and shortcuts\n"
+                    "[bold]/resume[/bold]     Continue a previous session\n"
+                    "[bold]/model[/bold]      Switch configured model",
+                    classes="quick-start",
+                )
+                yield Static("Recent sessions", classes="welcome-heading recent-heading")
+                yield Static(self._recent_text(), classes="recent-sessions")
+
+    def _recent_text(self) -> Text:
+        if not self.recent_sessions:
+            return Text("No previous sessions in this workspace")
+        output = Text()
+        for index, (session_id, title) in enumerate(self.recent_sessions[:3]):
+            if index:
+                output.append("\n")
+            output.append(session_id, style="bold")
+            output.append(f"  {title[:44]}")
+        return output
+
+    def set_model(self, model: str) -> None:
+        self.model = model
+        self.query_one("#welcome-model", Static).update(model)
+
+    def set_permission(self, permission: str) -> None:
+        self.permission = permission
+        self.query_one("#welcome-permission", Static).update(f"permission: {permission}")
 
 
 class MessageList(Vertical):
-    """消息列表容器，自动纵向扩展。"""
     pass
 
 
 class ChatContainer(ScrollableContainer):
-    """可滚动的对话区域。"""
-
-    BORDER_TITLE = "对话"
+    def __init__(self) -> None:
+        super().__init__()
+        self._follow_timer = None
 
     def compose(self) -> ComposeResult:
         yield MessageList()
 
     async def add_user_message(self, text: str) -> None:
-        msg = UserMessage(text)
-        await self.query_one(MessageList).mount(msg)
-        self.scroll_end(animate=False)
+        await self.query_one(MessageList).mount(UserMessage(text))
+        self.follow_output()
 
-    async def add_assistant_message(self, text: str = "") -> AssistantMessage:
-        msg = AssistantMessage(text)
-        await self.query_one(MessageList).mount(msg)
-        self.scroll_end(animate=False)
-        return msg
+    async def add_assistant_message(self) -> "AssistantMessage":
+        message = AssistantMessage()
+        await self.query_one(MessageList).mount(message)
+        self.follow_output()
+        return message
 
-    async def scroll_to_bottom(self) -> None:
-        self.scroll_end(animate=False)
+    async def add_system_message(self, text: str, variant: str = "info") -> None:
+        await self.query_one(MessageList).mount(SystemMessage(text, variant))
+        self.follow_output()
+
+    async def add_welcome(
+        self,
+        model: str,
+        workdir: str,
+        permission: str = "default",
+        recent_sessions: list[tuple[str, str]] | None = None,
+        release: str | None = None,
+    ) -> None:
+        await self.query_one(MessageList).mount(
+            WelcomePanel(model, workdir, permission, recent_sessions or [], release or app_version())
+        )
+        self.follow_output()
+
+    async def clear_messages(self) -> None:
+        await self.query_one(MessageList).remove_children()
+
+    def follow_output(self) -> None:
+        self.scroll_end(animate=False, force=True, immediate=True)
+        if self._follow_timer is not None:
+            self._follow_timer.stop()
+        self._follow_timer = self.set_timer(0.05, self._finish_follow)
+
+    def _finish_follow(self) -> None:
+        self._follow_timer = None
+        self.scroll_end(animate=False, force=True, immediate=True)
 
 
 class UserMessage(Static):
-    """用户消息，以 Markdown 渲染。"""
-
     def __init__(self, text: str) -> None:
-        super().__init__(f"> **你：** {text}")
+        content = Text()
+        content.append(">", style="bold #ff928b")
+        content.append(f" {text}")
+        super().__init__(content)
+
+
+class SystemMessage(Static):
+    MARKERS = {"info": "i", "success": "ok", "warning": "!", "error": "!", "denied": "x"}
+
+    def __init__(self, text: str, variant: str = "info") -> None:
+        safe_variant = variant if variant in self.MARKERS else "info"
+        super().__init__(
+            f"[{self.MARKERS[safe_variant]}] {text}",
+            classes=f"notice-{safe_variant}",
+            markup=False,
+        )
+
+
+class ActivityLine(Static):
+    FRAMES = (".  ", ".. ", "...")
+
+    def __init__(self) -> None:
+        super().__init__("", classes="activity-line")
+        self.status = ""
+        self.tool = ""
+        self.turn = 0
+        self.frame = 0
+        self.started_at = time.monotonic()
+        self.display = False
+
+    def on_mount(self) -> None:
+        self.set_interval(0.35, self._tick)
+
+    def set_activity(self, status: str, tool: str = "", turn: int = 0) -> None:
+        next_turn = turn or self.turn
+        if (status, tool, next_turn) != (self.status, self.tool, self.turn):
+            self.started_at = time.monotonic()
+        self.status = status
+        self.tool = tool
+        self.turn = next_turn
+        self.display = bool(status and status not in {"idle", "completed"})
+        self._render_activity()
+
+    def clear(self) -> None:
+        self.status = ""
+        self.display = False
+
+    def _tick(self) -> None:
+        if not self.display:
+            return
+        self.frame = (self.frame + 1) % len(self.FRAMES)
+        self._render_activity()
+
+    def _render_activity(self) -> None:
+        if not self.display:
+            return
+        label = self.status.replace("_", " ").title()
+        detail = f"  {self.tool}" if self.tool else ""
+        turn = f"  turn {self.turn}" if self.turn else ""
+        elapsed = max(0, int(time.monotonic() - self.started_at))
+        content = Text()
+        content.append(self.FRAMES[self.frame], style="bold #ff928b")
+        content.append(f" {label}{detail}{turn}  {elapsed}s  ")
+        content.append("ctrl+c to interrupt", style="dim")
+        self.update(content)
 
 
 class AssistantMessage(Vertical):
-    """助手消息，支持流式追加 token 和内嵌工具调用卡片。"""
-
-    def __init__(self, initial_text: str = "") -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._accumulated = initial_text
-        self._tool_widgets: list = []
+        self.content = ""
+        self._flush_scheduled = False
+        self._has_tool_output = False
 
     def compose(self) -> ComposeResult:
-        """初始只放一个 RichLog 用于流式显示。"""
-        self._log = RichLog(highlight=True, markup=True, max_lines=10000)
-        yield self._log
-        if self._accumulated:
-            self._log.write(self._accumulated)
+        yield Markdown("")
+        yield ActivityLine()
 
-    async def append_token(self, token: str) -> None:
-        """追加一个流式 token 到 RichLog。"""
-        self._accumulated += token
-        try:
-            # 转义方括号等 Rich 标记字符，防止意外渲染
-            safe = rich_escape(token)
-            self._log.write(safe)
-        except Exception:
-            pass  # 容错：某些字符可能导致 Rich 渲染异常
+    async def append_token(self, text: str) -> None:
+        self.content += text
+        if not self._flush_scheduled:
+            self._flush_scheduled = True
+            self.set_timer(0.04, self._flush)
 
-    async def finalize_content(self) -> None:
-        """流式完成后，尝试将内容完整渲染。"""
-        if not self._accumulated:
+    def _flush(self) -> None:
+        self._flush_scheduled = False
+        if not self.is_mounted:
             return
-        # 在 RichLog 下方追加一个 Markdown 组件以完整渲染
-        # （不移除 RichLog，保持流式显示的历史感）
-        try:
-            md = Markdown(self._accumulated)
-            self._md_widget = md
-            await self.mount(md)
-        except Exception:
-            pass
+        markdown = self.query(Markdown).first()
+        if markdown is not None:
+            markdown.update(self.content)
 
-    def set_content_direct(self, text: str) -> None:
-        """非流式模式：直接设置内容。"""
-        self._accumulated = text
-        try:
-            self._log.clear()
-            self._log.write(text)
-        except Exception:
-            pass
+    async def finalize(self) -> None:
+        self._flush()
+        self.clear_activity()
+
+    @property
+    def has_visible_content(self) -> bool:
+        return bool(self.content.strip() or self._has_tool_output)
+
+    def mark_tool_output(self) -> None:
+        self._has_tool_output = True
+
+    async def discard_if_empty(self) -> bool:
+        if self.has_visible_content or not self.is_mounted:
+            return False
+        await self.remove()
+        return True
+
+    def set_activity(self, status: str, tool: str = "", turn: int = 0) -> None:
+        self.query_one(ActivityLine).set_activity(status, tool, turn)
+
+    def clear_activity(self) -> None:
+        if self.is_mounted:
+            self.query_one(ActivityLine).clear()

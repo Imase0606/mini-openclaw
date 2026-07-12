@@ -1,5 +1,7 @@
 # mini-OpenClaw（学生 starter 仓库）
 
+<img src="tui/assets/knowledge-terminal-128.png" alt="mini-openclaw 像素知识终端" width="96">
+
 > 你将在这 10 天里，把这个骨架填成一个能在命令行里干活的通用智能体。
 > 每个模块里都有 `# TODO[DayN]` 标记，告诉你哪天该填哪里。
 
@@ -93,6 +95,23 @@ python -m eval.demo_check
 ```
 
 成本估算通过 `MODEL_INPUT_USD_PER_1M` 和 `MODEL_OUTPUT_USD_PER_1M` 配置；未配置时仍统计 token，但不猜测供应商价格。
+
+### 交互式终端界面
+
+```bash
+pip install -e .
+mini-openclaw
+# 兼容入口
+python -m tui
+```
+
+TUI 与 CLI 共用 `AgentRuntime`、权限策略、Memory、Todo、Skill、MCP 和 trace。会话自动脱敏保存，可用 `/sessions` 和 `/resume` 恢复；`/compact` 压缩上下文，`/model` 切换已配置模型。输入 `/help` 查看全部命令。常用快捷键为 `Ctrl+C` 中断、空闲时 `Ctrl+D` 退出、`Shift+Tab` 切换权限模式、`Ctrl+B` 展开 Todo/产物/trace 抽屉。忙碌时输入会进入最多 10 条的 FIFO 队列，`!command` 通过权限层和 Shell 沙箱直接执行。
+
+模型密钥和 endpoint 只从环境变量读取。内置别名为 `deepseek` 和 `mimo`；可用不含密钥的 JSON 扩展 OpenAI-compatible 模型：
+
+```bash
+export MINI_OPENCLAW_MODEL_ALIASES='{"local":{"api_key_env":"LOCAL_API_KEY","base_url_env":"LOCAL_BASE_URL","model_env":"LOCAL_MODEL","default_base_url":"http://127.0.0.1:8000/v1","default_model":"local-chat","context_window":32768,"supports_images":false}}'
+```
 
 ## 里程碑
 

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from agent.memory import KVMemory, Memory
 from agent.planning import TodoList
+from agent.runtime import load_model_profiles
+from agent.session import SessionStore
 from agent.tracer import Tracer, replay
 from mcp.client import MCPClient
 from security.redteam import run_cases
@@ -44,6 +46,11 @@ def main() -> int:
         tracer.record("llm", "demo", usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}, output="ok")
         checks.append(("Trace 回放", "demo" in replay(tracer.path) and tracer.summary()["total_tokens"] == 12, str(tracer.path)))
 
+        sessions = SessionStore(root / "sessions", workdir=root)
+        sessions.save("demo", [{"role": "user", "content": "hello"}], settings={"model_alias": "deepseek"})
+        restored = sessions.load("demo")
+        checks.append(("TUI 会话", restored.history[0]["content"] == "hello", "redacted JSON session"))
+
     skills = load_skills()
     matched = [skill.name for skill in match_skills("总结 B站视频 BV1DEMO", skills)]
     checks.append(("Skill 召回", matched == ["video-summary"], str(matched)))
@@ -72,6 +79,21 @@ def main() -> int:
         except (OSError, json.JSONDecodeError) as exc:
             detail = str(exc)
     checks.append(("视频知识库样例", kb_ok, detail))
+
+    try:
+        import textual
+        from tui.app import MiniOpenClawApp  # noqa: F401
+
+        checks.append(("交互式 TUI", True, f"Textual {textual.__version__}"))
+    except Exception as exc:
+        checks.append(("交互式 TUI", False, str(exc)))
+
+    profiles = load_model_profiles()
+    profile_ok = {"deepseek", "mimo"}.issubset(profiles) and profiles["mimo"].supports_images
+    checks.append(("模型别名", profile_ok, ", ".join(sorted(profiles))))
+
+    assets = [Path("tui/assets/knowledge-terminal-128.png"), Path("tui/assets/knowledge-terminal-512.png")]
+    checks.append(("项目形象资产", all(path.is_file() for path in assets), ", ".join(str(path) for path in assets)))
 
     for name, ok, detail in checks:
         print(f"[{'ok' if ok else 'FAIL'}] {name}: {detail}")
