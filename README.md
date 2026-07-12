@@ -2,6 +2,8 @@
 
 <img src="tui/assets/knowledge-terminal-128.png" alt="mini-openclaw 像素知识终端" width="96">
 
+完整的安装、模型配置、TUI、视频提炼与图片分析说明见 [使用指南](docs/user_guide.md)。
+
 > 你将在这 10 天里，把这个骨架填成一个能在命令行里干活的通用智能体。
 > 每个模块里都有 `# TODO[DayN]` 标记，告诉你哪天该填哪里。
 
