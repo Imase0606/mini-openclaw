@@ -363,7 +363,9 @@ def run_checks(*, release: bool = False, live: bool = False) -> list[Check]:
     if release:
         add("H", "消融数据", _check_ablation())
         add("H", "里程碑 tags", _check_tags())
-        status = _run_git("status", "--porcelain")
+        # The shared Windows/WSL worktree is checked out with CRLF files.
+        # Pin normalization so WSL Git does not report every text file dirty.
+        status = _run_git("-c", "core.autocrlf=true", "status", "--porcelain")
         clean = status.stdout.strip()
         status_ok = status.returncode == 0 and not clean
         status_detail = (
