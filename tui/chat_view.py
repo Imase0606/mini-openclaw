@@ -8,6 +8,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.widgets import Markdown, Static
+from textual.widget import Widget
 
 
 KNOWLEDGE_TERMINAL_ASCII = r"""
@@ -156,6 +157,37 @@ class SystemMessage(Static):
 
 
 class ActivityLine(Static):
+    """Animated status bar shown at the bottom of each assistant message.
+
+    Displays the current agent activity state (thinking, outputting, running a tool,
+    etc.) with an animated frame, elapsed time, and interrupt hint.
+    """
+
+    STATUS_LABELS: dict[str, str] = {
+        "thinking": "Thinking",
+        "outputting": "Outputting",
+        "running tool": "Running Tool",
+        "waiting for permission": "Waiting for Permission",
+        "planning": "Planning",
+        "searching": "Searching",
+        "reading": "Reading",
+        "writing": "Writing",
+        "compacting": "Compacting",
+        "interrupting": "Interrupting",
+        "analyzing": "Analyzing",
+        "generating": "Generating",
+        "summarizing": "Summarizing",
+        "reviewing": "Reviewing",
+        "coding": "Coding",
+        "debugging": "Debugging",
+        "testing": "Testing",
+        "optimizing": "Optimizing",
+        "fetching": "Fetching",
+        "installing": "Installing",
+        "completed": "",
+        "idle": "",
+    }
+
     FRAMES = (".  ", ".. ", "...")
 
     def __init__(self) -> None:
@@ -183,6 +215,7 @@ class ActivityLine(Static):
     def clear(self) -> None:
         self.status = ""
         self.display = False
+        self.update("")
 
     def _tick(self) -> None:
         if not self.display:
@@ -190,13 +223,26 @@ class ActivityLine(Static):
         self.frame = (self.frame + 1) % len(self.FRAMES)
         self._render_activity()
 
+    def _get_display_label(self) -> str:
+        """Return a human-readable label for the current status with ``...`` suffix."""
+        raw = self.status.replace("_", " ").lower().strip()
+        label = self.STATUS_LABELS.get(raw, raw.title())
+        if not label:
+            return ""
+        return f"{label}..."
+
     def _render_activity(self) -> None:
         if not self.display:
             return
-        label = self.status.replace("_", " ").title()
+        label = self._get_display_label()
+        if not label:
+            self.update("")
+            return
+
         detail = f"  {self.tool}" if self.tool else ""
         turn = f"  turn {self.turn}" if self.turn else ""
         elapsed = max(0, int(time.monotonic() - self.started_at))
+
         content = Text()
         content.append(self.FRAMES[self.frame], style="bold #ff928b")
         content.append(f" {label}{detail}{turn}  {elapsed}s  ")
@@ -205,6 +251,9 @@ class ActivityLine(Static):
 
 
 class AssistantMessage(Vertical):
+    """A single assistant response, composed of a Markdown body, optional tool
+    call cards, and an animated ActivityLine pinned at the bottom."""
+
     def __init__(self) -> None:
         super().__init__()
         self.content = ""
@@ -214,6 +263,12 @@ class AssistantMessage(Vertical):
     def compose(self) -> ComposeResult:
         yield Markdown("")
         yield ActivityLine()
+
+    async def mount_tool_card(self, card: Widget) -> None:
+        """Mount a tool-call card before the ActivityLine so the status bar
+        always stays at the very bottom of this message."""
+        activity = self.query_one(ActivityLine)
+        await self.mount(card, before=activity)
 
     async def append_token(self, text: str) -> None:
         self.content += text
