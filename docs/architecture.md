@@ -13,6 +13,9 @@ flowchart TD
     LOOP <--> TODO[TodoList 规划状态]
     LOOP --> TRACE[脱敏 JSONL Trace]
     TOOLS --> KB[knowledge_base/BV]
+    KB --> INDEX[可重建 SQLite 个人知识索引]
+    INDEX --> RAG[kb_search / kb_catalog]
+    RAG --> LOOP
 ```
 
 ## 核心层
@@ -20,7 +23,7 @@ flowchart TD
 - **Backend**：把 OpenAI-compatible 响应归一化为 `content/tool_calls/usage`。
 - **AgentLoop**：执行 ReAct 循环、工具回填、compaction、重试、反思和停止判断。
 - **Tools/MCP**：提供文件、Shell、网页、记忆、规划和视频提取能力。
-- **Skills**：按任务召回领域工作流；视频任务只加载 `video-summary`。
+- **Skills**：按任务召回领域工作流；`video-summary` 负责入库，`personal-video-knowledge` 负责历史知识问答。
 - **Security**：三级权限、工作区路径限制、bubblewrap、外部数据边界和出站白名单。
 - **Memory**：`MEMORY.md` 保存脱敏项目约定，私有 JSON 保存用户明确要求记住的偏好。
 - **Planning**：单次运行独立 Todo 状态，支持失败恢复和无进展停止。
@@ -38,6 +41,12 @@ flowchart TD
 ## 视频数据流
 
 `video_probe -> video_transcribe -> read transcript -> 可选 OCR -> 类型判断 -> kb_write`。知识点只能来自 metadata、transcript 和 OCR；搜索结果不能冒充视频内容。产物统一位于 `knowledge_base/<BV>/`。
+
+`kb_write` 按完整字幕段和分 P 生成带时间范围的 chunks，并增量更新 `.mini-openclaw/video_knowledge.sqlite3`。该数据库只是派生缓存，原始知识文件仍是事实来源，可随时执行 `python -m tools.knowledge --reindex` 重建。
+
+索引 v2 保存 transcript SHA-256、SimHash、重复关系和 schema version。精确重复只保留一个 searchable canonical，近似内容仅提示；检索使用 BM25 召回、查询覆盖率阈值、单视频上限和 token Jaccard MMR 重排。
+
+个人知识问答只暴露 `kb_search`、`kb_catalog`、只读记忆和规划工具。知识治理使用独立管理 Skill，只额外暴露需确认的软删除、恢复、导出和永久清理 Tool，不开放 Shell、网络、MCP 或视频下载。
 
 ## 信任边界
 

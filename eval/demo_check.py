@@ -282,7 +282,10 @@ def run_checks(*, release: bool = False, live: bool = False) -> list[Check]:
         runtime_memory = KVMemory(root / "memory.json")
         register_memory_tools(registry, runtime_memory)
         register_planning_tools(registry, todo)
-        expected = {"remember", "forget_memory", "recall_memory", "todo_write", "update_todo"}
+        expected = {
+            "remember", "forget_memory", "recall_memory", "todo_write", "update_todo",
+            "kb_search", "kb_catalog", "kb_forget", "kb_restore", "kb_export", "kb_purge_trash",
+        }
         add("A", "工具注册", (expected.issubset(set(registry.names())), f"{len(registry)} tools"))
 
         project_memory = Memory(root / "MEMORY.md")
@@ -312,6 +315,10 @@ def run_checks(*, release: bool = False, live: bool = False) -> list[Check]:
     skills = load_skills()
     matched = [skill.name for skill in match_skills("总结 B站视频 BV1DEMO", skills)]
     add("D", "Skill 召回", (matched == ["video-summary"], str(matched)))
+    personal = [skill.name for skill in match_skills("从我之前提炼的视频里找安装方法", skills)]
+    add("D", "个人知识 Skill", (personal == ["personal-video-knowledge"], str(personal)))
+    manager = [skill.name for skill in match_skills("导出知识库并查看回收区", skills)]
+    add("D", "知识治理 Skill", (manager == ["personal-video-knowledge-manager"], str(manager)))
 
     client = MCPClient([sys.executable, str(ROOT / "mcp/echo_server.py")], name="demo-echo", startup_timeout=5)
     try:

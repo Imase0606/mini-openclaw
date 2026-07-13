@@ -1,0 +1,8 @@
+# Optional local OCR stack. The explicit +cpu wheels avoid pulling CUDA
+# packages from the default PyPI mirror on CPU-only machines.
+-r requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
+easyocr>=1.7.2

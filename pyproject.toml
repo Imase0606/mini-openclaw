@@ -7,16 +7,26 @@ name = "mini-openclaw"
 version = "0.2.0"
 description = "A secure terminal agent for video knowledge extraction"
 requires-python = ">=3.11"
-dynamic = ["dependencies"]
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.0",
+    "PyYAML>=6.0",
+    "Pillow>=10.0",
+    "textual>=8.2,<9",
+    "markdownify>=0.13",
+    "yt-dlp>=2025.6.30",
+    "opencc-python-reimplemented>=0.1.7",
+    "faster-whisper>=1.1.0",
+    "imageio-ffmpeg>=0.6.0",
+]
 
 [project.scripts]
 mini-openclaw = "tui.__main__:main"
-
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.packages.find]
 include = ["agent*", "backend*", "eval*", "mcp*", "prompt*", "security*", "skills*", "tools*", "tui*"]
 
 [tool.setuptools.package-data]
 tui = ["*.tcss", "assets/*.png"]
+eval = ["fixtures/*.json"]
+skills = ["*/SKILL.md"]

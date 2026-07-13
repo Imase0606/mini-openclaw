@@ -25,6 +25,16 @@ python -m agent.cli --plan --yes \
 
 展示 `video-summary` 自动召回、Todo 推进、缓存复用、类型化模板和 `knowledge_base/<BV>/index.md`。指出知识依据只来自 metadata/transcript/OCR，RAG 数据单独进入 `chunks.jsonl`。
 
+随后演示知识资产复用：
+
+```bash
+python -m agent.cli "从我之前提炼的视频里找：Claude Code Windows 安装有哪些易错点？"
+```
+
+展示 `personal-video-knowledge` 召回、`kb_search` Top-K、视频标题/BV/分P/时间位置，以及知识库回答与模型通用知识的分区。强调 SQLite 只是可重建索引，新增视频由 `kb_write` 自动增量入库。
+
+可追加一个可恢复治理桥段：先查看 `kb_catalog`，对演示 BV 执行“忘记视频”，在权限弹窗确认后观察它进入回收区且无法检索，再用返回的 `trash_id` 恢复。不要在现场执行永久清理。
+
 评委给新链接时直接替换 URL。若网络或媒体流失败，保留诚实降级结果，再使用缓存样例继续讲解，不伪造“已观看”。
 
 ## 9:00–11:00 记忆与故障恢复
@@ -63,5 +73,7 @@ python -m agent.cli --replay-trace .mini-openclaw/traces/<run-id>.jsonl
 ## 14:00–17:00 消融与答辩
 
 打开 `eval/planning_ablation.md`：先讲自变量和控制变量，再讲成功率、耗时、轮次和 token，最后陈述限制。结论应是“规划有明确开销，适合复杂任务”，不能把外部 HTTP 错误算成 Agent 失败，也不能用不足 3 个有效样本声称稳定性提升。
+
+补充展示 `python -m eval.rag_evaluation`：固定 30 问题基准不依赖个人缓存，同时报告检索质量、无答案识别、来源多样性和 10k chunk p95。
 
 按 `docs/defense_qa.md` 分配组员：主循环/工具、视频/MCP/Skill、安全、记忆/规划/trace 各有明确负责人，每人都能解释一个设计取舍。

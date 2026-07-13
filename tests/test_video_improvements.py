@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from agent.policy import ToolPolicy
 from skills.loader import Skill
 from tools.base import Tool, ToolRegistry
 from tools.fs import _read, _write
-from tools.video import _kb_write
+from tools.video import _kb_write, _whisper_model_source
 
 
 @contextmanager
@@ -45,6 +46,28 @@ class ScriptedBackend:
             }
         self.last_observation = str(messages[-1].get("content") or "")
         return {"role": "assistant", "content": "已拒绝危险操作", "tool_calls": []}
+
+
+class WhisperModelSourceTests(unittest.TestCase):
+    def test_explicit_local_model_is_used_without_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "faster-whisper-base"
+            model.mkdir()
+            with patch.dict(os.environ, {"FASTER_WHISPER_MODEL_PATH": str(model)}):
+                self.assertEqual(_whisper_model_source("base"), str(model))
+
+    def test_missing_explicit_model_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-model"
+            with patch.dict(os.environ, {"FASTER_WHISPER_MODEL_PATH": str(missing)}):
+                with self.assertRaisesRegex(RuntimeError, "本地模型目录不存在"):
+                    _whisper_model_source("base")
+
+    def test_model_name_remains_the_local_development_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, working_directory(Path(tmp)):
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("FASTER_WHISPER_MODEL_PATH", None)
+                self.assertEqual(_whisper_model_source("base"), "base")
 
 
 class VideoTemplateTests(unittest.TestCase):

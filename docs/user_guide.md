@@ -18,11 +18,15 @@ pip install -e .
 python -m agent.cli --selfcheck
 ```
 
-首次使用 EasyOCR 时会下载 OCR 模型；无字幕视频首次转写时会下载 faster-whisper 模型。CPU 环境可按需安装 CPU 版 PyTorch：
+无字幕视频首次转写时会下载 faster-whisper 模型。EasyOCR 是可选视觉补充，默认部署不会安装 PyTorch；需要关键帧 OCR 的 WSL/CPU 环境再执行：
 
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-ocr.txt
 ```
+
+该文件固定使用 CPU-only PyTorch，避免从普通 PyPI 镜像下载体积很大的 CUDA 运行库。未安装 EasyOCR 不影响元数据、字幕、ASR、Markdown 知识库和 MiMo 图片分析。
+
+`requirements.txt` 会通过 `-e .` 安装项目自身，因此自动部署也会注册 `mini-openclaw` 命令。课程部署包内置 `models/faster-whisper-base`；根目录 `Dockerfile` 会校验模型完整性和命令入口。运行时通过 `FASTER_WHISPER_MODEL_PATH` 使用本地模型，构建期和运行期都不需要连接 Hugging Face。在平台交互终端中可运行 `mini-openclaw`，也可使用 `python -m tui`；Textual 界面必须连接 TTY，不能直接通过普通 HTTP 地址显示。
 
 确认 WSL 使用的是 Linux `npx`，否则 filesystem MCP 可能无法启动：
 
@@ -139,6 +143,54 @@ knowledge_base/<BV>/
 ```
 
 其中 `index.md` 是主要阅读入口，`chunks.jsonl` 用于后续 RAG。程序不会长期保存完整音视频。仅支持无需登录的公开内容，不绕过会员、私密、地区或平台访问限制。
+
+### 询问个人视频知识库
+
+每次视频提炼成功后都会自动增量入库。无需记住命令，直接用自然语言说明要查询以前提炼的视频：
+
+```text
+从我之前提炼的视频里找：Claude Code 安装需要配置哪些环境变量？
+我的视频知识库里有哪些教程？
+只根据知识库回答，不要补充常识：视频中如何解释 Agent Skill？
+```
+
+默认搜索当前工作区的全部历史视频，也可在问题中指定 BV、标题、作者或视频类型。回答中的 BV、分 P 和时间范围用于返回原视频定位，不代表事实核查。
+
+知识库命中不足时，回答会把模型自身知识放入单独的“通用知识补充”部分。明确要求只根据知识库时不会产生该部分；完全无命中时会说明缺少哪些主题。
+
+旧知识库升级或索引损坏时运行：
+
+```bash
+python -m tools.knowledge reindex
+python -m eval.rag_evaluation
+```
+
+### 管理个人知识资产
+
+CLI 与 TUI 都可以直接使用自然语言：
+
+```text
+查看我的知识库和回收区
+忘记视频 BV1...
+恢复回收区中的 BV1...
+导出全部个人视频知识库
+永久清理回收区中的 <trash_id>
+```
+
+“忘记”会把完整 BV 目录移动到 `knowledge_base/.trash/` 并立即停止检索，返回的 `trash_id` 可用于恢复。永久清理不可恢复，必须再次确认；恢复目标已存在时不会覆盖。
+
+导出 ZIP 包含 metadata、Markdown、chunks、transcript、分 P transcript 和视觉笔记，不包含音视频、模型、索引、trace、会话或密钥。默认输出到被 Git 忽略的 `exports/`。
+
+维护命令与自然语言 Tool 共用实现：
+
+```bash
+python -m tools.knowledge list
+python -m tools.knowledge search "检索问题"
+python -m tools.knowledge forget BV1... --reason "不再需要"
+python -m tools.knowledge restore <trash_id>
+python -m tools.knowledge export --bvid BV1... --output exports/selected.zip
+python -m tools.knowledge purge <trash_id>
+```
 
 ## 5. 分析图片
 

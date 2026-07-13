@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+build/
+models/
+exports/
+.agentsv1.zip
+agents-fixed.zip
 out-*/
 *.bin
 *.gguf
@@ -10,5 +15,6 @@ out-*/
 
 # Keep one curated knowledge-base sample; ignore runtime-generated video outputs.
 knowledge_base/*
+!knowledge_base/.gitkeep
 !knowledge_base/BV1j9MP6wEV9/
 !knowledge_base/BV1j9MP6wEV9/**

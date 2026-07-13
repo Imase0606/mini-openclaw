@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -324,6 +325,24 @@ def _download_subtitles(url: str, job: Path, timeout: int, stem: str = "subtitle
     return sorted(job.glob(f"{stem}*.vtt"))
 
 
+def _whisper_model_source(model_size: str) -> str:
+    """Prefer an explicitly provisioned local model over a network download."""
+    configured = os.getenv("FASTER_WHISPER_MODEL_PATH", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if not path.is_dir():
+            raise RuntimeError(
+                "FASTER_WHISPER_MODEL_PATH 指向的本地模型目录不存在："
+                f"{path}"
+            )
+        return str(path)
+
+    bundled = Path("models") / f"faster-whisper-{model_size}"
+    if bundled.is_dir():
+        return str(bundled.resolve())
+    return model_size
+
+
 def _transcribe_audio(
     url: str,
     job: Path,
@@ -336,7 +355,11 @@ def _transcribe_audio(
             from faster_whisper import WhisperModel
         except ImportError as exc:
             raise RuntimeError("未安装 faster-whisper，无法在无字幕时执行 ASR：pip install faster-whisper") from exc
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        model = WhisperModel(
+            _whisper_model_source(model_size),
+            device="cpu",
+            compute_type="int8",
+        )
 
     with tempfile.TemporaryDirectory(prefix="mini_openclaw_audio_") as tmp:
         audio_out = str(Path(tmp) / "audio.%(ext)s")
@@ -674,21 +697,32 @@ def _load_metadata(value: str = "", path: str = "", *, job: Path | None = None) 
         return {"raw": raw}
 
 
-def _chunk_text(text: str, source_url: str, size: int = 1200) -> list[dict[str, Any]]:
-    clean = "\n".join(line for line in text.splitlines() if line and not line.startswith("# transcript_source:"))
-    chunks: list[dict[str, Any]] = []
-    for idx in range(0, len(clean), size):
-        body = clean[idx:idx + size].strip()
-        if not body:
-            continue
-        chunks.append({
-            "chunk_id": f"chunk-{len(chunks) + 1:03d}",
-            "source_url": source_url,
-            "start_time": "",
-            "end_time": "",
-            "text": body,
-        })
-    return chunks
+def _chunk_text(
+    text: str,
+    source_url: str,
+    size: int = 1200,
+    *,
+    title: str = "",
+    author: str = "",
+    video_type: str = "general",
+) -> list[dict[str, Any]]:
+    """Compatibility wrapper around the timestamp-aware knowledge chunker."""
+    from .knowledge import build_transcript_chunks
+
+    try:
+        bvid = _extract_bvid(source_url)
+    except ValueError:
+        bvid = "UNKNOWN"
+    return build_transcript_chunks(
+        text,
+        bvid=bvid,
+        source_url=source_url,
+        title=title,
+        author=author,
+        video_type=video_type,
+        target_chars=min(800, size),
+        max_chars=size,
+    )
 
 
 def _kb_write(
@@ -791,6 +825,7 @@ def _kb_write(
     metadata_out = job / "metadata.json"
     if not meta:
         meta = {"platform": "bilibili", "source_url": source_url, "bvid": bvid, "title": title}
+    meta["video_type"] = video_type
     if normalize_warnings:
         meta["normalize_warning"] = "；".join(normalize_warnings)
     metadata_out.write_text(_json(meta), encoding="utf-8")
@@ -801,7 +836,13 @@ def _kb_write(
     if visual_text:
         visual_out.write_text(visual_text, encoding="utf-8")
 
-    chunks = _chunk_text(transcript_text or visual_text, source_url)
+    chunks = _chunk_text(
+        transcript_text or visual_text,
+        source_url,
+        title=title,
+        author=str(meta.get("author") or ""),
+        video_type=video_type,
+    )
     chunks_path = job / "chunks.jsonl"
     chunks_path.write_text(
         "\n".join(json.dumps(c, ensure_ascii=False) for c in chunks) + ("\n" if chunks else ""),
@@ -873,6 +914,19 @@ def _kb_write(
 - 推测：未由 transcript 或 OCR 直接支持的观点，需要在后续总结中标明。{warning_section}
 """
     md_path.write_text(md, encoding="utf-8")
+    indexed = False
+    index_warning = ""
+    duplicate_of = ""
+    near_duplicates: list[dict[str, Any]] = []
+    try:
+        from .knowledge import index_video
+
+        index_status = index_video(job)
+        indexed = True
+        duplicate_of = str(index_status.get("duplicate_of") or "")
+        near_duplicates = list(index_status.get("near_duplicates") or [])
+    except Exception as exc:  # noqa: BLE001 - knowledge files remain valid without the derived cache.
+        index_warning = f"个人知识索引更新失败，可运行 python -m tools.knowledge --reindex 修复：{type(exc).__name__}: {exc}"
     return _json({
         "ok": True,
         "markdown_path": str(md_path),
@@ -882,6 +936,10 @@ def _kb_write(
         "chunks_path": str(chunks_path),
         "chunks": len(chunks),
         "video_type": video_type,
+        "indexed": indexed,
+        "index_warning": index_warning,
+        "duplicate_of": duplicate_of,
+        "near_duplicates": near_duplicates,
         "normalize_warning": "；".join(normalize_warnings),
     })
 

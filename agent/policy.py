@@ -17,8 +17,20 @@ VIDEO_TOOLS = {
     "read", "video_probe", "video_transcribe", "video_frame_ocr", "kb_write",
     "remember", "forget_memory", "recall_memory", "todo_write", "update_todo", "insert_todo",
 }
-PLAN_TOOLS = {"read", "grep", "glob", "recall_memory", "todo_write", "update_todo", "insert_todo", "web_fetch"}
-UNTRUSTED_CONTENT_TOOLS = {"read", "web_fetch", "video_probe", "video_transcribe", "video_frame_ocr"}
+KNOWLEDGE_TOOLS = {
+    "kb_search", "kb_catalog", "recall_memory", "todo_write", "update_todo", "insert_todo",
+}
+KNOWLEDGE_MANAGEMENT_TOOLS = KNOWLEDGE_TOOLS | {
+    "kb_forget", "kb_restore", "kb_export", "kb_purge_trash",
+}
+PLAN_TOOLS = {
+    "read", "grep", "glob", "kb_search", "kb_catalog", "recall_memory",
+    "todo_write", "update_todo", "insert_todo", "web_fetch",
+}
+UNTRUSTED_CONTENT_TOOLS = {
+    "read", "web_fetch", "video_probe", "video_transcribe", "video_frame_ocr",
+    "kb_search", "kb_catalog",
+}
 
 
 class ToolPolicy:
@@ -26,21 +38,38 @@ class ToolPolicy:
         self,
         *,
         video_mode: bool = False,
+        knowledge_mode: bool = False,
+        knowledge_management_mode: bool = False,
         task: str = "",
         workdir: Path | None = None,
         permission_mode: str = "default",
     ) -> None:
         self.video_mode = video_mode
+        self.knowledge_mode = knowledge_mode
+        self.knowledge_management_mode = knowledge_management_mode
         self.allowed_bvids = set(BVID_RE.findall(task))
         self.workdir = (workdir or Path.cwd()).resolve()
         self.permission_mode = permission_mode
 
     def schemas(self, registry: ToolRegistry) -> list[dict[str, Any]]:
         schemas = registry.schemas()
-        selected = schemas if not self.video_mode else [
-            schema for schema in schemas
-            if schema.get("function", {}).get("name") in VIDEO_TOOLS
-        ]
+        if self.knowledge_management_mode:
+            selected = [
+                schema for schema in schemas
+                if schema.get("function", {}).get("name") in KNOWLEDGE_MANAGEMENT_TOOLS
+            ]
+        elif self.knowledge_mode:
+            selected = [
+                schema for schema in schemas
+                if schema.get("function", {}).get("name") in KNOWLEDGE_TOOLS
+            ]
+        elif self.video_mode:
+            selected = [
+                schema for schema in schemas
+                if schema.get("function", {}).get("name") in VIDEO_TOOLS
+            ]
+        else:
+            selected = schemas
         if self.permission_mode == "plan":
             selected = [
                 schema for schema in selected
@@ -51,6 +80,16 @@ class ToolPolicy:
     def authorize(self, name: str, arguments: dict[str, Any]) -> tuple[permissions.Verdict, str]:
         if self.permission_mode == "plan" and name not in PLAN_TOOLS:
             return "deny", f"Plan 模式禁止修改或执行工具：{name}"
+        if self.knowledge_management_mode:
+            if name not in KNOWLEDGE_MANAGEMENT_TOOLS:
+                return "deny", f"个人知识库管理禁止调用无关工具：{name}"
+            if name in {"kb_forget", "kb_restore", "kb_export", "kb_purge_trash"}:
+                return "confirm", "知识资产修改或导出需要用户确认"
+            return "allow", "个人视频知识库只读工具"
+        if self.knowledge_mode:
+            if name not in KNOWLEDGE_TOOLS:
+                return "deny", f"个人视频知识问答禁止调用非只读工具：{name}"
+            return "allow", "个人视频知识库只读工具"
         if not self.video_mode:
             verdict = permissions.check(name, arguments, self.workdir)
             reason = {

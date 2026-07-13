@@ -16,6 +16,9 @@ class MiniOpenClawApp(App):
 
     TITLE = "mini-openclaw"
     SUB_TITLE = "video knowledge terminal"
+    # Textual 8.2 may dereference a detached Markdown paragraph when a mouse
+    # selection starts during a streamed update. TextArea selection is exempt.
+    ALLOW_SELECT = False
 
     CSS = (Path(__file__).parent / "styles.tcss").read_text(encoding="utf-8")
 

@@ -26,6 +26,7 @@ class Skill:
     description: str
     body: str
     path: Path
+    triggers: tuple[str, ...] = ()
 
 
 def parse_skill_md(text: str, path: Path) -> Skill:
@@ -37,7 +38,11 @@ def parse_skill_md(text: str, path: Path) -> Skill:
         meta = yaml.safe_load(fm) or {}
         name = meta.get("name", "")
         description = meta.get("description", "")
-    return Skill(name=name, description=description, body=body.strip(), path=path)
+    raw_triggers = meta.get("triggers", []) if text.startswith("---") else []
+    if isinstance(raw_triggers, str):
+        raw_triggers = [raw_triggers]
+    triggers = tuple(str(value).strip().lower() for value in raw_triggers if str(value).strip())
+    return Skill(name=name, description=description, body=body.strip(), path=path, triggers=triggers)
 
 
 def load_skills(root: str = "skills") -> list[Skill]:
@@ -61,6 +66,10 @@ def match_skills(task: str, skills: list[Skill]) -> list[Skill]:
     task_lower = task.lower()
     matched: list[Skill] = []
     for skill in skills:
+        if skill.triggers:
+            if any(trigger in task_lower for trigger in skill.triggers):
+                matched.append(skill)
+            continue
         terms = {
             token.strip(",.，。!！?？:：;；()（）[]【】'\"、/")
             for field in (skill.name, skill.description)

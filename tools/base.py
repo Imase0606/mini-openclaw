@@ -80,4 +80,17 @@ def build_default_registry() -> ToolRegistry:
     )
     for t in (video_probe_tool, video_transcribe_tool, video_frame_ocr_tool, kb_write_tool):
         reg.register(t)
+    from .knowledge import (
+        kb_catalog_tool,
+        kb_export_tool,
+        kb_forget_tool,
+        kb_purge_trash_tool,
+        kb_restore_tool,
+        kb_search_tool,
+    )
+    for t in (
+        kb_search_tool, kb_catalog_tool, kb_forget_tool, kb_restore_tool,
+        kb_export_tool, kb_purge_trash_tool,
+    ):
+        reg.register(t)
     return reg

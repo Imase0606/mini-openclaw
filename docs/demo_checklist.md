@@ -8,6 +8,8 @@
 | B 任务完成 | 随机 B站链接生成知识库 | `knowledge_base/BV1j9MP6wEV9/` |
 | C 主循环/规划 | `--plan` 展示 Todo、正确终止 | `agent/loop.py`、规划测试 |
 | D MCP/Skills | echo/filesystem MCP 与 `video-summary` 召回 | `mcp/`、`skills/video-summary/` |
+| D 个人知识扩展 | 自然语言检索历次视频并附回看位置 | `kb_search`、`personal-video-knowledge` |
+| E 知识治理 | 展示重复状态、软删除与恢复，确认永久清理受保护 | `kb_catalog`、管理 Skill、治理测试 |
 | E 记忆/鲁棒性 | 两个进程验证记忆；故意错误路径后恢复 | Memory、compaction、重试测试 |
 | F 安全 | 注入页面和危险命令均被拦截 | `security/redteam_report.md` |
 | G 理解/答辩 | 回放 trace，指出最贵步骤和设计取舍 | `docs/defense_qa.md` |
@@ -22,6 +24,7 @@
 - 准备一个缓存视频和一个未缓存公开视频；缓存样例避免现场网络波动。
 - 清空无关终端，预先记下最后一个成功 trace 路径。
 - 确认 `v1`、`v3`、`final` tags 已推送，工作树干净。
+- 运行 `python -m eval.rag_evaluation`，确认 Recall@K、MRR、nDCG、无答案识别和 10k chunk 延迟达标。
 
 ## 验收命令
 

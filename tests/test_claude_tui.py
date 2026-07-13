@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import time
+import tomllib
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -187,6 +188,21 @@ class BrandAssetTests(unittest.TestCase):
                 bounds = image.getbbox()
                 assert bounds is not None
                 self.assertGreater(bounds[2] - bounds[0], size // 2)
+
+
+class PackagingTests(unittest.TestCase):
+    def test_requirements_install_project_and_register_tui_command(self):
+        root = Path(__file__).parents[1]
+        project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        requirements = (root / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+        active = [line.strip() for line in requirements if line.strip() and not line.startswith("#")]
+
+        self.assertEqual(project["project"]["scripts"]["mini-openclaw"], "tui.__main__:main")
+        self.assertEqual(active, ["-e ."])
+        self.assertNotIn("dynamic", project["project"])
+        self.assertIn("FASTER_WHISPER_MODEL_PATH=/app/models/faster-whisper-base", dockerfile)
+        self.assertNotIn("snapshot_download", dockerfile)
 
 
 class ClaudeStyleTUITests(unittest.IsolatedAsyncioTestCase):

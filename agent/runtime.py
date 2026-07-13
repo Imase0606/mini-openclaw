@@ -69,6 +69,19 @@ def build_system_prompt(
     planning_mode: str = "auto",
 ) -> tuple[str, list[str]]:
     matched = match_skills(task, skills)
+    matched_names_set = {skill.name for skill in matched}
+    ingest_terms = (
+        "提炼", "转写", "入库", "生成知识库", "重新提取", "重新生成",
+        "刷新视频", "处理这个视频", "总结这个视频",
+    )
+    knowledge_skills = {"personal-video-knowledge", "personal-video-knowledge-manager"}
+    if "video-summary" in matched_names_set and matched_names_set & knowledge_skills:
+        if any(term in task for term in ingest_terms):
+            matched = [skill for skill in matched if skill.name not in knowledge_skills]
+        else:
+            matched = [skill for skill in matched if skill.name != "video-summary"]
+    if any(skill.name == "personal-video-knowledge-manager" for skill in matched):
+        matched = [skill for skill in matched if skill.name != "personal-video-knowledge"]
     matched_names = sorted(skill.name for skill in matched)
     system = SYSTEM_PROMPT
     if memory_context.strip():
@@ -167,7 +180,13 @@ class AgentRuntime:
             options.planning_mode,
         )
         video_mode = "video-summary" in matched_names
-        if self.enable_mcp and not video_mode:
+        knowledge_management_mode = "personal-video-knowledge-manager" in matched_names and not video_mode
+        knowledge_mode = (
+            "personal-video-knowledge" in matched_names
+            and not video_mode
+            and not knowledge_management_mode
+        )
+        if self.enable_mcp and not video_mode and not knowledge_mode and not knowledge_management_mode:
             self._ensure_mcp()
         todo = TodoList() if options.planning_mode != "off" else None
         registry = self._turn_registry(todo)
@@ -183,6 +202,8 @@ class AgentRuntime:
             run_id=run_id,
             model=str(getattr(backend, "model", "fake-backend")),
             video_mode=video_mode,
+            knowledge_mode=knowledge_mode,
+            knowledge_management_mode=knowledge_management_mode,
             planning_mode=options.planning_mode,
             trace_path=str(self.tracer.path) if self.tracer else "",
         )
@@ -191,7 +212,13 @@ class AgentRuntime:
             registry,
             system,
             max_turns=options.max_turns,
-            tool_policy=ToolPolicy(video_mode=video_mode, task=task, permission_mode=options.permission_mode),
+            tool_policy=ToolPolicy(
+                video_mode=video_mode,
+                knowledge_mode=knowledge_mode,
+                knowledge_management_mode=knowledge_management_mode,
+                task=task,
+                permission_mode=options.permission_mode,
+            ),
             auto_approve=options.auto_approve,
             auto_approve_tools={"write", "edit"} if options.permission_mode == "acceptEdits" else set(),
             confirm_callback=self.confirm_callback,

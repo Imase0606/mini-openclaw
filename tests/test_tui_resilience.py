@@ -226,6 +226,9 @@ class TUIResilienceTests(unittest.IsolatedAsyncioTestCase):
     def runtime_factory() -> AgentRuntime:
         return AgentRuntime(trace_enabled=False, enable_mcp=False)
 
+    def test_arbitrary_selection_is_disabled_for_streaming_markdown(self):
+        self.assertFalse(MiniOpenClawApp.ALLOW_SELECT)
+
     async def test_malformed_tool_output_is_rendered_as_plain_text(self):
         app = MiniOpenClawApp(self.runtime_factory)
         async with app.run_test(size=(120, 40)) as pilot:

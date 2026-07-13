@@ -42,10 +42,17 @@ mini-OpenClaw 是一个 Claude Code 式的命令行 Agent：
 conda create -n openclaw python=3.11 && conda activate openclaw
 pip install -r requirements.txt
 
+# 可选：需要关键帧 OCR 时安装 CPU-only OCR 依赖
+pip install -r requirements-ocr.txt
+
 # 2. 运行离线自检与 Demo Day 运行时验收
 python -m agent.cli --selfcheck
 python -m eval.demo_check
 ```
+
+课程部署平台默认只安装 `requirements.txt`，不会下载 PyTorch/CUDA；视频元数据、字幕、ASR、知识库和 MiMo 图像输入仍可用。EasyOCR 仅用于 PPT、代码和图表的关键帧文字补充，未安装时工具会明确降级。
+
+`requirements.txt` 会安装项目本身并注册 `mini-openclaw` 命令，因此课程平台即使使用自动 Dockerfile 也能获得 TUI 入口。部署压缩包内置 `models/faster-whisper-base`，自定义 `Dockerfile` 会校验模型和命令入口，不在构建期或运行期访问 Hugging Face。在平台提供的交互终端中运行 `mini-openclaw`；备用入口为 `python -m tui`。Textual TUI 需要真实 TTY，不能作为普通 HTTP 网页直接打开。
 
 ### 视频知识库
 
@@ -58,6 +65,22 @@ python -m agent.cli --video-type tutorial "提炼这个B站视频：https://www.
 ```
 
 视频任务启用最小权限工具集，不会调用通用 `write`、`edit`、`bash` 或 MCP 写工具。产物统一写入 `knowledge_base/<BV>/`。
+
+每次 `kb_write` 成功后会增量更新本地个人视频知识索引。之后可以直接询问历次提炼内容：
+
+```bash
+python -m agent.cli "从我之前提炼的视频里找：Windows 安装 Claude Code 有哪些易错点？"
+python -m agent.cli "我的视频知识库里有哪些教程？"
+
+# 升级旧知识库或修复派生索引，不会重新下载和 ASR
+python -m tools.knowledge --reindex
+python -m tools.knowledge list
+python -m tools.knowledge search "Agent 记忆"
+```
+
+个人知识问答只开放 `kb_search`、`kb_catalog` 等只读工具。回答优先依据知识库并附视频位置；知识不足时，模型常识会放在独立的“通用知识补充”部分。
+
+知识库支持自然语言软删除、恢复和导出，例如“忘记视频 BV...”“恢复回收区中的 BV...”“导出我的知识库”。治理 Tool 会触发确认；软删除可恢复，只有明确清理回收区才会永久删除。
 
 ### 安全确认
 
