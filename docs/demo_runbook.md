@@ -9,8 +9,9 @@ conda activate openclaw
 python -m agent.cli --selfcheck
 python -m eval.demo_check
 python -m eval.teacher_acceptance
-python -m tools.bilibili_auth status
 ```
+
+课程镜像为 ephemeral 模式，独立 `bilibili_auth status` 不会继承其他进程的登录态。`--fresh-live` 会在自己的进程内提示扫码；TUI 使用 `/bilibili-status` 查看当前 Runtime 状态。
 
 说明默认检查会真实执行核心工具、MCP、compaction、重试和红队，不只是 import。打开 `mini-openclaw`，指出模型、权限模式、context 和工作目录。
 
@@ -20,12 +21,29 @@ python -m tools.bilibili_auth status
 
 ## 4:00–9:00 视频任务
 
+先在验收现场获取并确认新链接：
+
 ```bash
-python -m agent.cli --plan --yes \
-  "提炼已有缓存视频 https://www.bilibili.com/video/BV1KjoxBoEQJ/，复用转写并生成适合人阅读的知识库"
+python -m eval.teacher_acceptance --fresh-live
 ```
 
-展示 `video-summary` 自动召回、Todo 推进、缓存复用、类型化模板和 `knowledge_base/<BV>/index.md`。指出知识依据只来自 metadata/transcript/OCR，RAG 数据单独进入 `chunks.jsonl`。
+该命令从知识区和生活区/热门流实时取候选。B2 需要连续两轮 `not_found`，或连续两轮字幕因时长不一致被拒绝；网络/API/认证错误不能入选。完整预检要求 ASR、用户确认后才运行 Whisper。时长不一致候选会标记为易变，必须立即执行。报告保存在 `.mini-openclaw/teacher_acceptance/<timestamp>/`。复制刚确认的 B1 或 B2 链接进入真实 Agent，**先运行 B2**；如果来源已经变成字幕，该候选立即作废并重新执行 `--fresh-live`，不能冒充 ASR 通过：
+
+```bash
+python -m agent.cli --bilibili-login --plan \
+  "把 <现场确认的B站链接> 提炼成适合人阅读的知识库"
+```
+
+如果是 B2，在权限提示中输入 `y`。展示 `video-summary` 自动召回、Todo 推进、字幕或 ASR 真实来源、类型化模板和 `knowledge_base/<BV>/index.md`。指出知识依据只来自 metadata/transcript/OCR，RAG 数据单独进入 `chunks.jsonl`。说明为何调用或跳过 OCR。
+
+无内容场景不依赖临时寻找纯音乐视频：
+
+```bash
+python -m eval.teacher_acceptance --case b3 \
+  --artifacts-dir .mini-openclaw/teacher-b3
+```
+
+打开三类 fixture 的诊断 `index.md`，展示固定提示、零 chunks、`indexed=false` 和不可检索。若现场网络失败，缓存样例只用于继续讲架构，不能冒充现场 B1/B2 通过。
 
 随后演示知识资产复用：
 

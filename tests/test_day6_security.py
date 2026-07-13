@@ -14,10 +14,10 @@ from unittest.mock import patch
 from agent.loop import AgentLoop
 from agent.permissions import check
 from agent.policy import ToolPolicy
-from mcp.client import MCPClient, MCPError
 from tools.base import Tool, ToolRegistry
 from tools.external import wrap_external
 from tools.fs import _write
+from tools.mcp_client import MCPClient, MCPError
 from tools.more_tools import _validate_web_url, _web_fetch, web_fetch_allow_hosts
 from tools.shell import _bash, dangerous_reason
 

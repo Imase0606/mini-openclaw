@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import tomllib
@@ -111,6 +113,20 @@ class RuntimeExtensionTests(unittest.TestCase):
         runtime.close()
         self.assertTrue(backend.closed)
 
+    def test_mcp_silently_skips_optional_filesystem_without_npx(self):
+        events = []
+        runtime = AgentRuntime(trace_enabled=False, enable_mcp=True, event_sink=events.append)
+        try:
+            with patch("agent.runtime.shutil.which", return_value=None):
+                runtime._ensure_mcp()
+            names = runtime.base_registry.names()
+            notices = [event.data for event in events if event.kind == "notice"]
+            self.assertIn("mcp__echo", names)
+            self.assertIn("mcp__add", names)
+            self.assertFalse(any("filesystem" in item.get("message", "") for item in notices))
+        finally:
+            runtime.close()
+
     def test_backend_accepts_root_or_v1_base_url(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
             root = DeepSeekBackend(base_url="https://example.com")
@@ -181,6 +197,12 @@ class RuntimeExtensionTests(unittest.TestCase):
 
 
 class BrandAssetTests(unittest.TestCase):
+    def test_welcome_logo_identifies_video_knowledge_terminal(self):
+        from tui.chat_view import KNOWLEDGE_TERMINAL_ASCII
+
+        self.assertIn("VIDEO + KB", KNOWLEDGE_TERMINAL_ASCII)
+        self.assertEqual(len(KNOWLEDGE_TERMINAL_ASCII.splitlines()), 5)
+
     def test_pixel_terminal_assets_are_rgba_and_old_mascot_is_removed(self):
         root = Path(__file__).parents[1] / "tui"
         self.assertFalse((root / "scared.png").exists())
@@ -201,13 +223,39 @@ class PackagingTests(unittest.TestCase):
         project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         requirements = (root / "requirements.txt").read_text(encoding="utf-8").splitlines()
         dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+        dockerignore = (root / ".dockerignore").read_text(encoding="utf-8").splitlines()
         active = [line.strip() for line in requirements if line.strip() and not line.startswith("#")]
 
         self.assertEqual(project["project"]["scripts"]["mini-openclaw"], "tui.__main__:main")
         self.assertEqual(active, ["-e ."])
         self.assertNotIn("dynamic", project["project"])
         self.assertIn("FASTER_WHISPER_MODEL_PATH=/app/models/faster-whisper-base", dockerfile)
+        self.assertIn("BILIBILI_AUTH_MODE=ephemeral", dockerfile)
         self.assertNotIn("snapshot_download", dockerfile)
+        self.assertIn(".mini-openclaw/", dockerignore)
+        self.assertIn("knowledge_base/*", dockerignore)
+        self.assertIn("*.zip", dockerignore)
+        self.assertNotIn("models/", dockerignore)
+
+    def test_generic_runtime_loads_project_mcp_client_outside_source_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agent.runtime import AgentRuntime; "
+                    "runtime = AgentRuntime(trace_enabled=False, enable_mcp=True); "
+                    "runtime._ensure_mcp(); "
+                    "assert any(name.startswith('mcp__') for name in runtime.base_registry.names()); "
+                    "runtime.close()",
+                ],
+                cwd=tmp,
+                env={**os.environ, "PATH": ""},
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        self.assertEqual(process.returncode, 0, process.stderr or process.stdout)
 
 
 class ClaudeStyleTUITests(unittest.IsolatedAsyncioTestCase):

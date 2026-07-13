@@ -102,9 +102,17 @@ def main(argv: list[str] | None = None) -> int:
     planning.add_argument("--no-plan", action="store_true", help="关闭 Todo 规划，用于简单任务或消融")
     p.add_argument("--max-turns", type=int, default=40, help="Agent 最大决策轮数，默认 40")
     p.add_argument("--no-trace", action="store_true", help="本次不保存运行 trace")
+    p.add_argument(
+        "--bilibili-login",
+        action="store_true",
+        help="在当前进程扫码登录后执行任务；用于 ephemeral 课程部署",
+    )
     p.add_argument("--trace-path", metavar="PATH", help="指定 trace JSONL 输出路径")
     p.add_argument("--replay-trace", metavar="PATH", help="回放 trace 并输出 token/成本报告")
     args = p.parse_args(argv)
+
+    if args.bilibili_login and not args.task:
+        p.error("--bilibili-login 必须同时提供任务")
 
     if args.replay_trace:
         from agent.tracer import cost_report, replay
@@ -125,6 +133,12 @@ def main(argv: list[str] | None = None) -> int:
     if runtime.model_name == "fake-backend":
         print("[提示] 未启用真后端，使用 FakeBackend。配置 DEEPSEEK_API_KEY 后即用真模型。")
     try:
+        if args.bilibili_login:
+            from tools.bilibili_auth import interactive_login
+
+            login_result = interactive_login(session=runtime.bilibili_auth_session)
+            if login_result.get("status") != "success":
+                raise RuntimeError(f"B站扫码登录未完成：{login_result.get('status')}")
         result = runtime.run_turn(
             args.task or "请描述图片中的内容。",
             options=RuntimeOptions(

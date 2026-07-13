@@ -11,6 +11,7 @@ description: 当用户提供 B站 Bilibili b23.tv BV 视频链接、字幕或文
 
 1. 调用 `video_probe` 获取标题、UP主、简介、发布时间、时长、BV 号和分 P 信息。
    - 若返回 `knowledge_base_ready=true`，且用户没有明确要求刷新、重新转写、重新 OCR 或更换视频类型模板，立即调用 `read` 读取返回的 `index_path`，然后直接返回已有知识库摘要和文件路径；不要再次调用 `video_transcribe` 或 `kb_write`。
+   - 若返回 `knowledge_base_status=visual_pending`，说明旧知识库缺少视觉终态；继续复用已有 transcript，并自动补做一次视觉探测。
    - 只有知识库未就绪或用户明确要求重新生成时，才继续以下完整流程。
 2. 首先调用 `video_transcribe`，保持 `allow_asr=false`：
    - 优先使用匿名字幕，其次使用用户扫码登录后的B站内置字幕；两者都不可用时，只有用户确认后才使用 faster-whisper 本地 ASR。
@@ -26,7 +27,13 @@ description: 当用户提供 B站 Bilibili b23.tv BV 视频链接、字幕或文
    - `narrative`：剧情、娱乐片段、人物经历或事件记录。
    - `commentary`：观点表达、测评、评论或论战。
    - `general`：证据不足、混合类型或无法可靠分类。
-4. 仅当视频包含 PPT、代码、图表、界面操作，或用户明确需要视觉信息时，调用 `video_frame_ocr`。成功后读取 `visual_notes_path`。OCR 只补充画面信息，不替代语音主干。
+4. 每个新视频或缺少视觉终态的旧知识库都必须调用一次 `video_frame_ocr`，不得只根据 transcript 猜测画面是否重要：
+   - 默认复用已有视觉终态；用户明确要求重新 OCR、刷新画面或重新分析视觉内容时传 `force=true`。
+   - 工具会按分 P 自适应抽取最多 12-24 帧，优先使用 MiMo V2.5，失败时降级 EasyOCR。
+   - `visual_status=completed` 或 `degraded` 且 `records>0` 时，调用 `read` 读取 `visual_notes_path`，并把画面信息作为 transcript 的补充。
+   - `visual_status=no_reliable_content` 时继续总结，但明确说明关键帧未提供可靠补充。
+   - `visual_status=failed` 时仍可基于可靠 transcript 继续，必须在信息缺口中写明视觉分析失败原因。
+   - `kb_write` 前必须存在上述任一视觉终态；权限层会拒绝跳过本步骤的写入。
 5. 根据 transcript、OCR 和 metadata 提炼内容，调用 `kb_write`：
    - 传入 `source_url`、`transcript_path`、`metadata_path`，有 OCR 时再传 `visual_notes_path`。
    - `source_url` 必须逐字复制 `video_probe` 返回的 canonical URL，不要凭记忆重写或调换 BV 字符。
@@ -63,6 +70,7 @@ description: 当用户提供 B站 Bilibili b23.tv BV 视频链接、字幕或文
 - `transcript.txt`：单集转写或多分 P 合并稿
 - `transcript_pN.txt`：多分 P 的独立转写
 - `visual_notes.jsonl`：OCR 结果（如有）
+- `visual_contact_sheet.jpg`：本次实际分析的关键帧联系表（带分 P 和时间标签）
 - `chunks.jsonl`：RAG-ready 切块
 
 `index.md` 的公共结构如下，类型章节由 `video_type` 决定：

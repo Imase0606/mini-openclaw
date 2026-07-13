@@ -5,7 +5,7 @@
 | 评分项 | 现场证据 | 仓库证据 |
 | --- | --- | --- |
 | A 系统完整性 | `--selfcheck`、启动 TUI | `docs/architecture.md`、各模块 README |
-| B 任务完成 | 随机 B站链接生成知识库 | `knowledge_base/BV1j9MP6wEV9/` |
+| B 任务完成 | 现场发现 B1/B2 链接并生成知识库 | `eval.teacher_acceptance --fresh-live` |
 | C 主循环/规划 | `--plan` 展示 Todo、正确终止 | `agent/loop.py`、规划测试 |
 | D MCP/Skills | echo/filesystem MCP 与 `video-summary` 召回 | `mcp/`、`skills/video-summary/` |
 | D 登录字幕 | 用户扫码后真实内置字幕命中，ASR 调用为 0 | `bilibili_auth`、`bilibili_subtitles` |
@@ -19,15 +19,19 @@
 ## 上场前 30 分钟
 
 - `which python` 必须指向 `/home/imase/miniconda3/envs/openclaw/bin/python`。
-- 确认 `which npx` 为 Linux 路径，`bwrap --version` 和 `ffmpeg -version` 正常。
+- 确认 `bwrap --version` 和 `ffmpeg -version` 正常；filesystem MCP 需要 Linux `npx`，未安装时系统应无警告地跳过并使用内置文件工具。
 - 确认 DeepSeek/MiMo Key 仅存在于环境变量，并有足够余额。
 - 运行完整 unittest、redteam、默认 demo check 和 `--release` 检查。
-- 准备一个缓存视频和一个未缓存公开视频；缓存样例避免现场网络波动。
+- 运行 `python -m eval.teacher_acceptance --fresh-live`，现场确认知识区 B1 和无可用字幕 B2；缓存样例只作为网络故障后的讲解后备。
 - 清空无关终端，预先记下最后一个成功 trace 路径。
 - 确认 `v1`、`v3`、`final` tags 已推送，工作树干净。
 - 运行 `python -m eval.rag_evaluation`，确认 Recall@K、MRR、nDCG、无答案识别和 10k chunk 延迟达标。
-- 运行 `python -m eval.teacher_acceptance`，确认字幕、ASR、空内容、注入和 OCR 后备 5 项全部通过。
-- 运行 `python -m tools.bilibili_auth status`；若演示内置字幕，必须为 `valid`，并提前确认测试 BV 确有字幕。
+- 运行 `python -m eval.teacher_acceptance`，确认字幕、ASR、三类空内容、注入和 OCR 后备 5 项全部通过。
+- 课程镜像确认 `BILIBILI_AUTH_MODE=ephemeral`；由 `--fresh-live` 或 TUI 在当前进程扫码，不能用独立 status 判断另一个进程的登录态。
+- 重新部署前删除旧服务器登录态，并在B站登录设备管理中撤销此前共享容器创建的网页会话。
+- 若多人会附着到同一个终端/TUI Runtime，改用 `BILIBILI_AUTH_MODE=disabled`；ephemeral 只能隔离不同 Runtime。
+- 运行 B3 持久证据命令，现场打开诊断 `index.md` 和空 `chunks.jsonl`。
+- 确认 `.dockerignore` 排除 trace、运行知识库、ZIP 和缓存，但没有排除离线 Whisper 模型。
 
 ## 验收命令
 
@@ -36,6 +40,8 @@ python -m agent.cli --selfcheck
 python -m unittest discover -s tests -v
 python -m security.redteam
 python -m eval.teacher_acceptance
+python -m eval.teacher_acceptance --fresh-live
+python -m eval.teacher_acceptance --case b3 --artifacts-dir .mini-openclaw/teacher-b3
 python -m eval.teacher_acceptance --subtitle-auth-live --bvid <BV>
 python -m eval.demo_check
 python -m eval.demo_check --live

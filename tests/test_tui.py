@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 from PIL import Image
 
 from agent.events import AgentEvent
@@ -189,6 +191,28 @@ class TUITests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(screen.runtime.history, [])
+
+    async def test_new_session_clears_ephemeral_bilibili_login(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"BILIBILI_AUTH_MODE": "ephemeral"}
+        ), patch("tools.bilibili_auth.auth_root", return_value=Path(tmp)), patch(
+            "tools.bilibili_auth._keyring", return_value=None
+        ):
+            app = MiniOpenClawApp(self.runtime_factory)
+            async with app.run_test(size=(120, 40)):
+                screen = app.screen
+                assert isinstance(screen, MainScreen) and screen.runtime is not None
+                previous = screen.runtime.bilibili_auth_session
+                cookies = httpx.Cookies()
+                cookies.set("SESSDATA", "tui-secret", domain=".bilibili.com", path="/")
+                previous.save(cookies)
+
+                await screen._new_session()
+
+                self.assertEqual(list(previous.load()[0].jar), [])
+                assert screen.runtime is not None
+                self.assertIsNot(screen.runtime.bilibili_auth_session, previous)
+                self.assertEqual(list(screen.runtime.bilibili_auth_session.load()[0].jar), [])
 
     async def test_image_command_and_narrow_layout(self):
         with tempfile.TemporaryDirectory() as tmp:

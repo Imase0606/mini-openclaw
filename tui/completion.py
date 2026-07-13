@@ -23,7 +23,7 @@ COMMANDS = {
     "/video-type": "Set video note type",
     "/bilibili-login": "Scan QR for built-in subtitles",
     "/bilibili-status": "Check Bilibili subtitle login",
-    "/bilibili-logout": "Remove local Bilibili login",
+    "/bilibili-logout": "Clear this Runtime's Bilibili login",
     "/image": "Attach an image",
     "/images": "List pending images",
     "/trace": "Show trace details",

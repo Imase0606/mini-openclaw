@@ -35,8 +35,28 @@ class ToolCallCard(Collapsible):
             self.remove_class(f"tool-{state}")
         if status in {"done", "denied", "error"}:
             self.add_class(f"tool-{status}")
-        self.title = Content(f"{mark} {self.tool_name}{self._summary(self.arguments)}  {duration_ms}ms")
+        visual_summary = self._visual_summary(result) if self.tool_name == "video_frame_ocr" else ""
+        self.title = Content(
+            f"{mark} {self.tool_name}{self._summary(self.arguments)}{visual_summary}  {duration_ms}ms"
+        )
         self.query_one(".tool-result", Static).update(result[:3000])
+
+    @staticmethod
+    def _visual_summary(result: str) -> str:
+        start = result.find("{")
+        end = result.rfind("}")
+        if start < 0 or end < start:
+            return ""
+        try:
+            payload = json.loads(result[start:end + 1])
+        except json.JSONDecodeError:
+            return ""
+        return (
+            f"  {payload.get('visual_status', '--')}"
+            f"/{payload.get('visual_backend', '--')}"
+            f" {int(payload.get('frames_sampled') or 0)}f"
+            f" {int(payload.get('records') or 0)}r"
+        )
 
     @staticmethod
     def _summary(arguments: dict) -> str:

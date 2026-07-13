@@ -11,11 +11,11 @@ from textual.widgets import Markdown, Static
 
 
 KNOWLEDGE_TERMINAL_ASCII = r"""
-   +---------+
-   | >  ===  |
-   | [] ===  |
-   +----+----+
-        |_|
+   .-----------------.
+  /  >_  VIDEO + KB   \
+ |   [>]  ===  ::     |
+  '-------. .---------'
+          |_|
 """.strip("\n")
 
 

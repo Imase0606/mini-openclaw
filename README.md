@@ -30,7 +30,7 @@ mini-OpenClaw 是一个 Claude Code 式的命令行 Agent：
 | `backend/` | DeepSeek/MiMo 的 OpenAI-compatible 客户端与图像输入 |
 | `agent/` | ReAct 主循环、上下文、权限、记忆、规划、会话和 trace |
 | `tools/` | 文件、Shell、网页与视频提取工具 |
-| `mcp/` | stdio JSON-RPC MCP 客户端 |
+| `mcp/` | stdio JSON-RPC MCP server 示例；客户端位于 `tools/mcp_client.py` |
 | `skills/` | 按任务召回的领域工作流 |
 | `tui/` | 与 CLI 共用 Runtime 的 Textual 交互界面 |
 | `security/`、`eval/` | 红队测试、自动验收与消融实验 |
@@ -49,6 +49,8 @@ pip install -r requirements-ocr.txt
 python -m agent.cli --selfcheck
 python -m eval.demo_check
 python -m eval.teacher_acceptance
+# 扫码后从B站现场发现并确认 B1/B2 链接
+python -m eval.teacher_acceptance --fresh-live
 ```
 
 课程部署平台默认只安装 `requirements.txt`，不会下载 PyTorch/CUDA；视频元数据、扫码登录字幕、确认式 ASR、知识库和 MiMo 图像输入仍可用。EasyOCR 仅用于 PPT、代码和图表的关键帧文字补充，未安装时工具会明确降级。
@@ -58,9 +60,12 @@ python -m eval.teacher_acceptance
 ### 视频知识库
 
 ```bash
-# 首次使用B站内置字幕时扫码登录一次
+# 个人本地默认 persistent，可独立扫码后跨进程复用
 python -m tools.bilibili_auth login
 python -m tools.bilibili_auth status
+
+# 课程 Docker 默认 ephemeral：在同一进程扫码并立即执行任务
+python -m agent.cli --bilibili-login "帮我提炼 <B站链接>"
 
 # 默认读取转写后自动选择教程、知识、叙事、评论或通用模板
 python -m agent.cli "提炼这个B站视频：https://www.bilibili.com/video/BV.../"
@@ -130,7 +135,7 @@ mini-openclaw
 python -m tui
 ```
 
-TUI 与 CLI 共用 `AgentRuntime`、权限策略、Memory、Todo、Skill、MCP 和 trace。会话自动脱敏保存，可用 `/sessions` 和 `/resume` 恢复；`/bilibili-login` 扫码登录内置字幕，`/bilibili-status` 查看状态，`/bilibili-logout` 删除本地登录态。输入 `/help` 查看全部命令。常用快捷键为 `Ctrl+C` 中断、空闲时 `Ctrl+D` 退出、`Shift+Tab` 切换权限模式、`Ctrl+B` 展开 Todo/产物/trace 抽屉。
+TUI 与 CLI 共用 `AgentRuntime`、权限策略、Memory、Todo、Skill、MCP 和 trace。会话自动脱敏保存，可用 `/sessions` 和 `/resume` 恢复；`/bilibili-login` 扫码登录内置字幕，`/bilibili-status` 查看状态，`/bilibili-logout` 清除当前登录态。课程镜像中的登录态只存在于当前 Runtime 内存、最多 30 分钟，`/new` 或退出即清除。输入 `/help` 查看全部命令。
 
 模型密钥和 endpoint 只从环境变量读取。内置别名为 `deepseek` 和 `mimo`；可用不含密钥的 JSON 扩展 OpenAI-compatible 模型：
 
@@ -149,6 +154,7 @@ Demo Day 的评分证据、时间安排和答辩准备见 [教师测试协商版
 ```bash
 python -m unittest discover -s tests -v
 python -m eval.teacher_acceptance
+python -m eval.teacher_acceptance --case b3 --artifacts-dir .mini-openclaw/teacher-b3
 python -m eval.rag_evaluation
 python -m eval.demo_check --release
 ```

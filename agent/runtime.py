@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import shutil
 import sys
 import threading
 import time
@@ -26,6 +27,7 @@ from agent.tracer import Tracer
 from backend.fake_backend import FakeBackend
 from skills.loader import load_skills, match_skills, skills_catalog
 from tools.base import ToolRegistry, build_default_registry
+from tools.bilibili_auth import bind_auth_session, create_auth_session
 from tools.memory import register_memory_tools
 from tools.planning import register_planning_tools
 
@@ -33,6 +35,7 @@ from tools.planning import register_planning_tools
 PlanningMode = str
 EventSink = Callable[[AgentEvent], None]
 ConfirmCallback = Callable[[str, dict[str, Any]], bool]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass
@@ -128,6 +131,7 @@ class AgentRuntime:
         confirm_callback: ConfirmCallback | None = None,
     ) -> None:
         self.session_id = uuid.uuid4().hex[:8]
+        self.bilibili_auth_session = create_auth_session()
         self.skills = load_skills()
         self.memory = KVMemory()
         self.project_memory = Memory("MEMORY.md")
@@ -230,7 +234,8 @@ class AgentRuntime:
             run_id=run_id,
         )
         prior_history = strip_transient_planning_history(self.history)
-        result = loop.run_turn(user_task, history=prior_history)
+        with bind_auth_session(self.bilibili_auth_session):
+            result = loop.run_turn(user_task, history=prior_history)
         self.history = strip_transient_planning_history(result.messages)
         result.messages = self.history
         return result
@@ -293,10 +298,11 @@ class AgentRuntime:
             return result
         started = time.perf_counter()
         try:
-            if self.tracer:
-                output = self.tracer.call("tool", name, lambda: tool.run(**arguments), input_data=arguments)
-            else:
-                output = tool.run(**arguments)
+            with bind_auth_session(self.bilibili_auth_session):
+                if self.tracer:
+                    output = self.tracer.call("tool", name, lambda: tool.run(**arguments), input_data=arguments)
+                else:
+                    output = tool.run(**arguments)
             result = policy.wrap_observation(name, str(output), arguments)
             status = "done"
         except Exception as exc:
@@ -313,6 +319,7 @@ class AgentRuntime:
         return result
 
     def close(self) -> None:
+        self.bilibili_auth_session.close()
         for client in reversed(self._mcp_clients):
             try:
                 client.close()
@@ -351,12 +358,16 @@ class AgentRuntime:
         if self._mcp_started:
             return
         self._mcp_started = True
-        from mcp.client import MCPClient, register_mcp_tools
+        from tools.mcp_client import MCPClient, register_mcp_tools
 
-        candidates = [
-            ("echo", [sys.executable, "mcp/echo_server.py"]),
-            ("filesystem", ["npx", "-y", "@modelcontextprotocol/server-filesystem", os.environ.get("MCP_FS_DIR", ".")]),
-        ]
+        candidates = [("echo", [sys.executable, str(ROOT / "mcp/echo_server.py")])]
+        npx_path = shutil.which("npx")
+        npx_usable = bool(npx_path and (os.name == "nt" or not npx_path.startswith("/mnt/")))
+        if npx_usable:
+            candidates.append((
+                "filesystem",
+                ["npx", "-y", "@modelcontextprotocol/server-filesystem", os.environ.get("MCP_FS_DIR", ".")],
+            ))
         filesystem_ready = False
         for name, command in candidates:
             client = MCPClient(command, name=name)
@@ -370,7 +381,7 @@ class AgentRuntime:
                 client.close()
                 self._emit("notice", level="warning", message=f"MCP {name} 未接入：{exc}")
         if not filesystem_ready:
-            client = MCPClient([sys.executable, "mcp/calc_server.py"], name="calc")
+            client = MCPClient([sys.executable, str(ROOT / "mcp/calc_server.py")], name="calc")
             try:
                 client.start()
                 register_mcp_tools(self.base_registry, client)

@@ -4,6 +4,7 @@ WORKDIR /app
 COPY . /app
 
 ENV FASTER_WHISPER_MODEL_PATH=/app/models/faster-whisper-base
+ENV BILIBILI_AUTH_MODE=ephemeral
 
 # requirements.txt installs the project and its runtime dependencies, which
 # creates the console script. The ASR model is bundled in the upload because

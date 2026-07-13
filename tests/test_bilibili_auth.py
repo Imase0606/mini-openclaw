@@ -4,6 +4,8 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,13 +16,18 @@ from tools.bilibili_subtitles import fetch_subtitles
 
 
 class BilibiliAuthTests(unittest.TestCase):
+    @staticmethod
+    def _cookies(value: str = "secret-session") -> httpx.Cookies:
+        cookies = httpx.Cookies()
+        cookies.set("SESSDATA", value, domain=".bilibili.com", path="/")
+        cookies.set("bili_jct", "csrf", domain=".bilibili.com", path="/")
+        return cookies
+
     def test_session_file_roundtrip_and_logout(self):
         with tempfile.TemporaryDirectory() as tmp, patch(
             "tools.bilibili_auth.auth_root", return_value=Path(tmp)
         ), patch("tools.bilibili_auth._keyring", return_value=None):
-            cookies = httpx.Cookies()
-            cookies.set("SESSDATA", "secret-session", domain=".bilibili.com", path="/")
-            cookies.set("bili_jct", "csrf", domain=".bilibili.com", path="/")
+            cookies = self._cookies()
             self.assertEqual(bilibili_auth.save_session(cookies), "file")
             loaded, storage = bilibili_auth.load_session()
             self.assertEqual(storage, "file")
@@ -67,13 +74,121 @@ class BilibiliAuthTests(unittest.TestCase):
             result = bilibili_auth.auth_status(client=client)
             client.close()
         self.assertEqual(result["status"], "valid")
-        self.assertEqual(set(result), {"status"})
+        self.assertEqual(set(result), {"mode", "status", "expires_in_seconds"})
         self.assertNotIn("never-expose-this", json.dumps(result))
 
     def test_terminal_qr_is_rendered_without_exposing_session_data(self):
         rendered = bilibili_auth.render_qr_ascii("https://example.test/short-lived-qr")
         self.assertGreater(len(rendered.splitlines()), 10)
         self.assertNotIn("SESSDATA", rendered)
+
+    def test_ephemeral_sessions_are_isolated_expire_and_never_read_cookie_file(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "BILIBILI_AUTH_MODE": "ephemeral",
+            "BILIBILI_COOKIE_FILE": str(Path(tmp) / "cookies.txt"),
+        }), patch("tools.bilibili_auth.auth_root", return_value=Path(tmp)), patch(
+            "tools.bilibili_auth._keyring", return_value=None
+        ), patch("tools.bilibili_auth.time.monotonic", return_value=100.0):
+            legacy = bilibili_auth.session_path()
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("legacy-secret", encoding="utf-8")
+            session_a = bilibili_auth.create_auth_session()
+            session_b = bilibili_auth.create_auth_session()
+            self.assertFalse(legacy.exists())
+            self.assertEqual(session_a.save(self._cookies("runtime-a")), "ephemeral")
+            loaded_a, storage_a = session_a.load()
+            loaded_b, storage_b = session_b.load()
+            self.assertEqual(storage_a, "ephemeral")
+            self.assertEqual(loaded_a.get("SESSDATA", domain=".bilibili.com"), "runtime-a")
+            self.assertEqual(storage_b, "ephemeral")
+            self.assertEqual(list(loaded_b.jar), [])
+            with bilibili_auth.bind_auth_session(session_a):
+                contextual, contextual_storage = bilibili_auth.load_session()
+            self.assertEqual(contextual_storage, "ephemeral")
+            self.assertEqual(contextual.get("SESSDATA", domain=".bilibili.com"), "runtime-a")
+
+        with patch("tools.bilibili_auth.time.monotonic", return_value=1901.0):
+            expired, storage = session_a.load()
+        self.assertEqual(storage, "expired")
+        self.assertEqual(list(expired.jar), [])
+
+        with patch("tools.bilibili_auth.time.monotonic", return_value=2000.0):
+            expiring = bilibili_auth.BilibiliAuthSession("ephemeral")
+            expiring.save(self._cookies("expiring"))
+        with patch("tools.bilibili_auth.time.monotonic", return_value=3801.0):
+            state = bilibili_auth.auth_status(session=expiring)
+        self.assertEqual(state, {
+            "mode": "ephemeral",
+            "status": "expired",
+            "expires_in_seconds": 0,
+        })
+
+    def test_runtime_close_clears_only_its_ephemeral_session(self):
+        from agent.runtime import AgentRuntime
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"BILIBILI_AUTH_MODE": "ephemeral"}
+        ), patch("tools.bilibili_auth.auth_root", return_value=Path(tmp)), patch(
+            "tools.bilibili_auth._keyring", return_value=None
+        ):
+            runtime_a = AgentRuntime(trace_enabled=False, enable_mcp=False)
+            runtime_b = AgentRuntime(trace_enabled=False, enable_mcp=False)
+            runtime_a.bilibili_auth_session.save(self._cookies("runtime-a"))
+            self.assertEqual(runtime_b.bilibili_auth_session.load()[1], "ephemeral")
+            self.assertEqual(list(runtime_b.bilibili_auth_session.load()[0].jar), [])
+            runtime_a.close()
+            self.assertEqual(list(runtime_a.bilibili_auth_session.load()[0].jar), [])
+            self.assertEqual(list(runtime_b.bilibili_auth_session.load()[0].jar), [])
+            runtime_b.close()
+
+    def test_disabled_mode_rejects_login_before_network(self):
+        session = bilibili_auth.BilibiliAuthSession("disabled")
+        client = unittest.mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, "禁用"):
+            bilibili_auth.begin_qr_login(client=client, session=session)
+        client.get.assert_not_called()
+
+    def test_standalone_ephemeral_login_is_rejected_with_guidance(self):
+        output = StringIO()
+        with patch.dict(os.environ, {"BILIBILI_AUTH_MODE": "ephemeral"}), redirect_stdout(output):
+            code = bilibili_auth.main(["login"])
+        self.assertEqual(code, 1)
+        self.assertIn("agent.cli --bilibili-login", output.getvalue())
+
+    def test_standalone_ephemeral_logout_does_not_claim_to_clear_live_runtime(self):
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"BILIBILI_AUTH_MODE": "ephemeral"}
+        ), patch("tools.bilibili_auth.auth_root", return_value=Path(tmp)), patch(
+            "tools.bilibili_auth._keyring", return_value=None
+        ), redirect_stdout(output):
+            code = bilibili_auth.main(["logout"])
+        self.assertEqual(code, 0)
+        self.assertIn("/bilibili-logout", output.getvalue())
+        self.assertNotIn('"status": "logged_out"', output.getvalue())
+
+    def test_combined_cli_passes_ephemeral_session_to_login(self):
+        from agent.cli import main
+
+        observed = []
+
+        def fake_login(*, session, timeout=180):
+            observed.append((session.mode, timeout))
+            session.save(self._cookies("cli-runtime"))
+            return {"status": "success", "storage": "ephemeral"}
+
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"BILIBILI_AUTH_MODE": "ephemeral"}
+        ), patch("tools.bilibili_auth.auth_root", return_value=Path(tmp)), patch(
+            "tools.bilibili_auth._keyring", return_value=None
+        ), patch("tools.bilibili_auth.interactive_login", side_effect=fake_login), patch(
+            "agent.runtime.AgentRuntime._ensure_mcp"
+        ), redirect_stdout(output):
+            code = main(["--no-trace", "--bilibili-login", "介绍一下你自己"])
+
+        self.assertEqual(code, 0, output.getvalue())
+        self.assertEqual(observed, [("ephemeral", 180)])
 
 
 class BilibiliSubtitleTests(unittest.TestCase):

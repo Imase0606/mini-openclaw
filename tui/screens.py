@@ -142,8 +142,7 @@ class MainScreen(Screen):
             self.worker.cancel()
         if self.poller and not self.poller.done():
             self.poller.cancel()
-        if self.bilibili_login_task and not self.bilibili_login_task.done():
-            self.bilibili_login_task.cancel()
+        self._cancel_bilibili_login()
         self._save_session()
         if self.runtime:
             self.runtime.close()
@@ -558,10 +557,14 @@ class MainScreen(Screen):
         if self.bilibili_login_task and not self.bilibili_login_task.done():
             await self._notice("Bilibili login is already waiting for confirmation", "warning")
             return
+        assert self.runtime is not None
         from tools.bilibili_auth import begin_qr_login, render_qr_ascii
 
         try:
-            challenge = await asyncio.to_thread(begin_qr_login)
+            challenge = await asyncio.to_thread(
+                begin_qr_login,
+                session=self.runtime.bilibili_auth_session,
+            )
             qr_text = await asyncio.to_thread(render_qr_ascii, challenge.url)
         except Exception as exc:
             await self._notice(f"Bilibili login unavailable: {type(exc).__name__}: {exc}", "error")
@@ -570,13 +573,18 @@ class MainScreen(Screen):
         self.app.push_screen(modal)
         self.bilibili_login_task = asyncio.create_task(self._poll_bilibili_login(challenge, modal))
 
+    def _cancel_bilibili_login(self) -> None:
+        if self.bilibili_login_task and not self.bilibili_login_task.done():
+            self.bilibili_login_task.cancel()
+        self.bilibili_login_task = None
+
     async def _poll_bilibili_login(self, challenge, modal: BilibiliLoginModal) -> None:
         from tools.bilibili_auth import poll_qr_once
 
         labels = {
             "waiting_scan": "Scan with the Bilibili mobile app",
             "scanned_waiting_confirmation": "Scanned. Confirm login on your phone.",
-            "success": "Login saved. Built-in subtitles are now available.",
+            "success": "Login active for this terminal only, for at most 30 minutes.",
             "expired": "QR code expired. Close and run /bilibili-login again.",
             "error": "Login request failed. Close and retry.",
         }
@@ -590,7 +598,12 @@ class MainScreen(Screen):
             for _ in range(90):
                 if not modal.is_mounted:
                     return
-                result = await asyncio.to_thread(poll_qr_once, challenge)
+                assert self.runtime is not None
+                result = await asyncio.to_thread(
+                    poll_qr_once,
+                    challenge,
+                    session=self.runtime.bilibili_auth_session,
+                )
                 status = str(result.get("status") or "error")
                 modal.update_status(labels.get(status, status))
                 if status in {"success", "expired", "error"}:
@@ -601,15 +614,24 @@ class MainScreen(Screen):
             challenge.client.close()
 
     async def _bilibili_status(self) -> None:
+        assert self.runtime is not None
         from tools.bilibili_auth import auth_status
 
-        result = await asyncio.to_thread(auth_status)
-        await self._notice(f"Bilibili subtitle login: {result['status']}")
+        result = await asyncio.to_thread(
+            auth_status,
+            session=self.runtime.bilibili_auth_session,
+        )
+        remaining = result.get("expires_in_seconds")
+        suffix = f", {remaining}s remaining" if remaining is not None and result["status"] == "valid" else ""
+        await self._notice(
+            f"Bilibili subtitle login: {result['status']} ({result['mode']}{suffix})"
+        )
 
     async def _bilibili_logout(self) -> None:
+        assert self.runtime is not None
         from tools.bilibili_auth import logout
 
-        await asyncio.to_thread(logout)
+        await asyncio.to_thread(logout, session=self.runtime.bilibili_auth_session)
         await self._notice("Bilibili subtitle login removed", "success")
 
     async def _open_artifact(self, args: list[str]) -> None:
@@ -625,6 +647,7 @@ class MainScreen(Screen):
 
     async def _new_session(self) -> None:
         self._save_session()
+        self._cancel_bilibili_login()
         if self.runtime:
             self.runtime.close()
         self.runtime = self.runtime_factory()
@@ -643,6 +666,7 @@ class MainScreen(Screen):
         except ValueError as exc:
             await self._notice(str(exc), "error")
             return
+        self._cancel_bilibili_login()
         if self.runtime:
             self.runtime.close()
         self.runtime = self.runtime_factory()

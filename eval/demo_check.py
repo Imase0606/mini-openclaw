@@ -27,11 +27,11 @@ from agent.runtime import load_model_profiles
 from agent.session import SessionStore
 from agent.tracer import Tracer, replay
 from backend.fake_backend import FakeBackend
-from mcp.client import MCPClient
 from security.redteam import run_cases
 from eval.teacher_acceptance import run_offline as run_teacher_acceptance
 from skills.loader import load_skills, match_skills
 from tools.base import Tool, ToolRegistry, build_default_registry
+from tools.mcp_client import MCPClient
 from tools.memory import register_memory_tools
 from tools.planning import register_planning_tools
 
@@ -171,6 +171,28 @@ def _check_documents() -> tuple[bool, str]:
     missing_topics = [topic for topic in required_topics if topic not in architecture]
     ok = not missing and not missing_topics and (ROOT / "docs/demo_runbook.md").is_file()
     detail = "complete" if ok else f"missing files={missing}; missing topics={missing_topics}"
+    return ok, detail
+
+
+def _check_docker_context() -> tuple[bool, str]:
+    path = ROOT / ".dockerignore"
+    dockerfile = ROOT / "Dockerfile"
+    if not path.is_file():
+        return False, "missing .dockerignore"
+    if not dockerfile.is_file():
+        return False, "missing Dockerfile"
+    entries = {
+        line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    required = {".git/", ".mini-openclaw/", "knowledge_base/*", "*.zip", "__pycache__/"}
+    missing = sorted(required - entries)
+    model_excluded = any(entry.rstrip("/") == "models" for entry in entries if not entry.startswith("!"))
+    ephemeral_auth = "BILIBILI_AUTH_MODE=ephemeral" in dockerfile.read_text(encoding="utf-8")
+    ok = not missing and not model_excluded and ephemeral_auth
+    detail = "runtime state excluded; bundled model retained; Bilibili auth ephemeral" if ok else (
+        f"missing={missing}; models_excluded={model_excluded}; ephemeral_auth={ephemeral_auth}"
+    )
     return ok, detail
 
 
@@ -387,6 +409,7 @@ def run_checks(*, release: bool = False, live: bool = False) -> list[Check]:
     if release:
         add("H", "消融数据", _check_ablation())
         add("H", "里程碑 tags", _check_tags())
+        add("H", "构建上下文隔离", _check_docker_context())
         # The shared Windows/WSL worktree is checked out with CRLF files.
         # Pin normalization so WSL Git does not report every text file dirty.
         status = _run_git("-c", "core.autocrlf=true", "status", "--porcelain")

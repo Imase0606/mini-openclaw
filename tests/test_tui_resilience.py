@@ -174,6 +174,12 @@ class VideoCacheTests(unittest.TestCase):
             job.mkdir()
             for name in ("index.md", "transcript.txt", "chunks.jsonl"):
                 job.joinpath(name).write_text("ready", encoding="utf-8")
+            visual_pending = json.loads(video._probe(metadata["source_url"]))
+            self.assertFalse(visual_pending["knowledge_base_ready"])
+            self.assertEqual(visual_pending["knowledge_base_status"], "visual_pending")
+            stored = json.loads(job.joinpath("metadata.json").read_text(encoding="utf-8"))
+            stored.update({"visual_status": "no_reliable_content", "visual_strategy_version": 1})
+            job.joinpath("metadata.json").write_text(json.dumps(stored), encoding="utf-8")
             ready = json.loads(video._probe(metadata["source_url"]))
             self.assertTrue(ready["knowledge_base_ready"])
             self.assertEqual(ready["index_path"], str(job / "index.md"))

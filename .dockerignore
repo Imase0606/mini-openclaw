@@ -1,0 +1,19 @@
+.git/
+.github/
+.mini-openclaw/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+exports/
+out-*/
+*.zip
+*.gguf
+
+# Keep only the curated tracked sample; runtime knowledge bases stay local.
+knowledge_base/*
+!knowledge_base/.gitkeep
+!knowledge_base/BV1j9MP6wEV9/
+!knowledge_base/BV1j9MP6wEV9/**

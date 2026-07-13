@@ -23,18 +23,53 @@ from typing import Any, Iterator
 import httpx
 
 
+def _decode_tool_arguments(raw: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Decode tool arguments without hiding malformed provider output."""
+    if raw is None or raw == "":
+        return {}, None
+    if isinstance(raw, dict):
+        return raw, None
+    if not isinstance(raw, str):
+        return {}, {
+            "type": "TypeError",
+            "message": "工具参数必须是 JSON 对象",
+            "length": 0,
+        }
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {}, {
+            "type": type(exc).__name__,
+            "message": exc.msg,
+            "position": exc.pos,
+            "line": exc.lineno,
+            "column": exc.colno,
+            "length": len(raw),
+        }
+    if not isinstance(parsed, dict):
+        return {}, {
+            "type": "TypeError",
+            "message": "工具参数 JSON 顶层必须是对象",
+            "length": len(raw),
+        }
+    return parsed, None
+
+
 class DeepSeekBackend:
     def __init__(self,
                  api_key: str | None = None,
                  base_url: str | None = None,
                  model: str | None = None,
-                 timeout: float | None = None):
+                 timeout: float | None = None,
+                 max_output_tokens: int | None = None):
         self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
         self.base_url = (base_url or os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")).rstrip("/")
         self.model = model or os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
         if not self.api_key:
             raise RuntimeError("缺少 DEEPSEEK_API_KEY 环境变量")
         request_timeout = timeout or float(os.environ.get("DEEPSEEK_TIMEOUT", "180"))
+        configured_max = max_output_tokens or int(os.environ.get("MODEL_MAX_OUTPUT_TOKENS", "4096"))
+        self.max_output_tokens = max(256, configured_max)
         self._client = httpx.Client(
             timeout=httpx.Timeout(request_timeout, connect=min(20.0, request_timeout)),
         )
@@ -55,6 +90,7 @@ class DeepSeekBackend:
             "model": self.model,
             "messages": self._to_openai_messages(messages),
             "temperature": temperature,
+            "max_tokens": getattr(self, "max_output_tokens", 4096),
         }
         if tools:
             payload["tools"] = tools           # OpenAI tools 格式，base.Tool.schema() 已生成
@@ -78,8 +114,9 @@ class DeepSeekBackend:
                 ) from exc
             raise
         payload_out = resp.json()
-        msg = payload_out["choices"][0]["message"]
-        normalized = self._normalize(msg)
+        choice = payload_out["choices"][0]
+        msg = choice["message"]
+        normalized = self._normalize(msg, finish_reason=choice.get("finish_reason"))
         usage = payload_out.get("usage") or {}
         normalized["usage"] = {
             "prompt_tokens": int(usage.get("prompt_tokens") or 0),
@@ -102,6 +139,7 @@ class DeepSeekBackend:
             "temperature": temperature,
             "stream": True,
             "stream_options": {"include_usage": True},
+            "max_tokens": getattr(self, "max_output_tokens", 4096),
         }
         if tools:
             payload["tools"] = tools
@@ -109,6 +147,7 @@ class DeepSeekBackend:
 
         accumulated: dict[int, dict[str, Any]] = {}
         emitted = False
+        final_finish_reason = ""
         with self._client.stream(
             "POST",
             self.chat_completions_url,
@@ -124,8 +163,11 @@ class DeepSeekBackend:
                     break
                 try:
                     packet = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        "SSE 数据包 JSON 解析失败："
+                        f"{exc.msg}（位置 {exc.pos}，长度 {len(raw)}）"
+                    ) from exc
                 usage = packet.get("usage") or {}
                 if usage:
                     yield {
@@ -150,27 +192,42 @@ class DeepSeekBackend:
                         function = fragment.get("function") or {}
                         entry["name"] += function.get("name") or ""
                         entry["arguments"] += function.get("arguments") or ""
-                    if choice.get("finish_reason") == "tool_calls":
-                        yield from self._stream_tool_calls(accumulated)
+                    finish_reason = str(choice.get("finish_reason") or "")
+                    if finish_reason:
+                        final_finish_reason = finish_reason
+                    if finish_reason == "tool_calls":
+                        yield from self._stream_tool_calls(accumulated, finish_reason=finish_reason)
                         emitted = True
         if accumulated and not emitted:
-            yield from self._stream_tool_calls(accumulated)
+            yield from self._stream_tool_calls(accumulated, finish_reason=final_finish_reason)
         yield {"type": "done"}
 
     @staticmethod
-    def _stream_tool_calls(accumulated: dict[int, dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    def _stream_tool_calls(
+        accumulated: dict[int, dict[str, Any]],
+        *,
+        finish_reason: str = "",
+    ) -> Iterator[dict[str, Any]]:
         for index in sorted(accumulated):
             entry = accumulated[index]
-            try:
-                arguments = json.loads(entry["arguments"] or "{}")
-            except json.JSONDecodeError:
+            arguments, arguments_error = _decode_tool_arguments(entry["arguments"])
+            if finish_reason == "length":
                 arguments = {}
-            yield {
+                arguments_error = {
+                    "type": "OutputTruncated",
+                    "message": "模型因输出长度上限停止，工具参数可能不完整",
+                    "length": len(entry["arguments"]),
+                    "finish_reason": finish_reason,
+                }
+            event = {
                 "type": "tool_call",
                 "id": entry["id"],
                 "name": entry["name"],
                 "arguments": arguments,
             }
+            if arguments_error:
+                event["arguments_error"] = arguments_error
+            yield event
 
     # --- 把内部 messages（含 role=tool）转成 OpenAI 标准格式 ---
     def _to_openai_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -228,13 +285,26 @@ class DeepSeekBackend:
 
     # --- 把 OpenAI 返回归一化成内部格式 ---
     @staticmethod
-    def _normalize(msg: dict[str, Any]) -> dict[str, Any]:
+    def _normalize(
+        msg: dict[str, Any],
+        *,
+        finish_reason: str = "",
+    ) -> dict[str, Any]:
         tool_calls = []
         for tc in (msg.get("tool_calls") or []):
             fn = tc.get("function", {})
-            try:
-                args = json.loads(fn.get("arguments") or "{}")
-            except json.JSONDecodeError:
+            args, arguments_error = _decode_tool_arguments(fn.get("arguments"))
+            if finish_reason == "length":
+                raw = fn.get("arguments")
                 args = {}
-            tool_calls.append({"id": tc.get("id"), "name": fn.get("name"), "arguments": args})
+                arguments_error = {
+                    "type": "OutputTruncated",
+                    "message": "模型因输出长度上限停止，工具参数可能不完整",
+                    "length": len(raw) if isinstance(raw, str) else 0,
+                    "finish_reason": finish_reason,
+                }
+            call = {"id": tc.get("id"), "name": fn.get("name"), "arguments": args}
+            if arguments_error:
+                call["arguments_error"] = arguments_error
+            tool_calls.append(call)
         return {"role": "assistant", "content": msg.get("content") or "", "tool_calls": tool_calls}

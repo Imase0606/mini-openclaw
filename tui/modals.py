@@ -44,7 +44,11 @@ class BilibiliLoginModal(ModalScreen[None]):
         with Vertical(id="bilibili-login-dialog"):
             yield Label("Bilibili subtitle login", id="bilibili-login-title")
             yield Static(self.qr_text, id="bilibili-login-qr", markup=False)
-            yield Static("Scan with the Bilibili mobile app", id="bilibili-login-status", markup=False)
+            yield Static(
+                "Scan with Bilibili. Login stays in this terminal for at most 30 minutes.",
+                id="bilibili-login-status",
+                markup=False,
+            )
             with Horizontal(id="bilibili-login-actions"):
                 yield Button("Close", id="bilibili-login-close")
 

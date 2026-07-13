@@ -179,13 +179,17 @@ class PlanningTests(unittest.TestCase):
             tool_call("kb_write", **args),
             {"content": "done", "tool_calls": []},
         ])
+        policy = ToolPolicy(video_mode=True, task="BV1CURRENT1")
+        policy.observe("video_frame_ocr", json.dumps({
+            "bvid": "BV1CURRENT1", "visual_status": "completed",
+        }))
         agent = AgentLoop(
             backend,
             registry,
             "system",
             todo=todo,
             planning_mode="force",
-            tool_policy=ToolPolicy(video_mode=True, task="BV1CURRENT1"),
+            tool_policy=policy,
         )
         self.assertEqual(agent.run("task"), "done")
         self.assertEqual(calls["count"], 1)

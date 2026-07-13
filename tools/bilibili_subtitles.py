@@ -11,7 +11,14 @@ from urllib.parse import urljoin
 
 import httpx
 
-from .bilibili_auth import HEADERS, auth_status, load_session
+from .bilibili_auth import (
+    HEADERS,
+    auth_status,
+    bind_auth_session,
+    create_auth_session,
+    interactive_login,
+    load_session,
+)
 
 
 PLAYER_URL = "https://api.bilibili.com/x/player/v2"
@@ -266,17 +273,35 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Audit Bilibili subtitle availability without modifying knowledge")
     parser.add_argument("command", choices=("audit",), default="audit", nargs="?")
     parser.add_argument("--bvid", action="append", dest="bvids")
+    parser.add_argument(
+        "--bilibili-login",
+        action="store_true",
+        help="scan and audit within the same ephemeral process",
+    )
     args = parser.parse_args(argv)
     bvids = args.bvids or _workspace_bvids()
     if not bvids:
         print(json.dumps({"ok": False, "message": "没有可审计的 BV"}, ensure_ascii=False))
         return 1
+    auth_session = create_auth_session()
     records = []
-    for bvid in bvids:
-        try:
-            records.append(audit_bvid(bvid))
-        except Exception as exc:
-            records.append({"bvid": bvid, "error": f"{type(exc).__name__}: {exc}"})
+    try:
+        if args.bilibili_login:
+            login_result = interactive_login(session=auth_session)
+            if login_result.get("status") != "success":
+                print(json.dumps({
+                    "ok": False,
+                    "message": f"B站扫码登录未完成：{login_result.get('status')}",
+                }, ensure_ascii=False))
+                return 1
+        with bind_auth_session(auth_session):
+            for bvid in bvids:
+                try:
+                    records.append(audit_bvid(bvid))
+                except Exception as exc:
+                    records.append({"bvid": bvid, "error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        auth_session.close()
     print(json.dumps({"ok": all("error" not in item for item in records), "videos": records}, ensure_ascii=False, indent=2))
     return 0 if all("error" not in item for item in records) else 1
 

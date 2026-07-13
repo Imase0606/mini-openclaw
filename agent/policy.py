@@ -31,6 +31,7 @@ UNTRUSTED_CONTENT_TOOLS = {
     "read", "web_fetch", "video_probe", "video_transcribe", "video_frame_ocr",
     "kb_search", "kb_catalog",
 }
+VISUAL_TERMINAL_STATUSES = {"completed", "no_reliable_content", "degraded", "failed"}
 
 
 class ToolPolicy:
@@ -48,6 +49,7 @@ class ToolPolicy:
         self.knowledge_mode = knowledge_mode
         self.knowledge_management_mode = knowledge_management_mode
         self.allowed_bvids = set(BVID_RE.findall(task))
+        self.visual_terminal_bvids: set[str] = set()
         self.workdir = (workdir or Path.cwd()).resolve()
         self.permission_mode = permission_mode
 
@@ -112,6 +114,8 @@ class ToolPolicy:
                 return "deny", f"{name} 的 {url_argument} 中没有可识别的 BV 号"
             if self.allowed_bvids and not bvids.issubset(self.allowed_bvids):
                 return "deny", "视频工具 URL 的 BV 号与当前任务/探测结果不一致"
+            if name == "kb_write" and not bvids.issubset(self.visual_terminal_bvids):
+                return "deny", "kb_write 前必须先完成 video_frame_ocr 自动视觉探测"
         if name == "video_transcribe" and bool(arguments.get("allow_asr")):
             return "confirm", "字幕不可用，下载音频并运行本地 Whisper 需要用户确认"
         if name == "read":
@@ -144,6 +148,9 @@ class ToolPolicy:
         bvid = payload.get("bvid") or metadata.get("bvid")
         if isinstance(bvid, str) and BVID_RE.fullmatch(bvid):
             self.allowed_bvids.add(bvid)
+            visual_status = str(payload.get("visual_status") or metadata.get("visual_status") or "")
+            if visual_status in VISUAL_TERMINAL_STATUSES:
+                self.visual_terminal_bvids.add(bvid)
 
     @staticmethod
     def wrap_observation(

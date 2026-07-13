@@ -40,7 +40,7 @@ flowchart TD
 
 ## 视频数据流
 
-`video_probe -> 匿名字幕 -> 扫码登录字幕 -> 用户确认 ASR -> read transcript -> 可选 OCR -> 类型判断 -> kb_write`。登录入口不注册为 Agent Tool；登录态只发送给B站字幕接口，媒体下载保持匿名。知识点只能来自 metadata、transcript 和 OCR。
+`video_probe -> 匿名字幕 -> 扫码登录字幕 -> 用户确认 ASR -> read transcript -> 可选 OCR -> 类型判断 -> kb_write`。登录入口不注册为 Agent Tool；课程镜像为每个 `AgentRuntime` 创建独立的 30 分钟内存登录态，个人本地仍可使用 persistent 存储。登录态只发送给B站字幕接口，媒体下载保持匿名。知识点只能来自 metadata、transcript 和 OCR。
 
 字幕/ASR 完成后由 Tool 统计有效片段、字符、语音时长和重复率。证据不足时 `kb_write` 忽略模型传入的摘要与要点，固定生成诊断型 `index.md`、零 chunks，并从检索索引移除；因此“没内容不编造”不依赖模型服从提示词。OCR 优先使用本地 EasyOCR，缺失时最多向已配置视觉模型发送 6 张压缩关键帧，两者都不可用时明确降级。
 

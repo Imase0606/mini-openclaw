@@ -6,7 +6,9 @@ build/
 models/
 exports/
 .agentsv1.zip
+.agents.zip
 agents-fixed.zip
+*.zip
 out-*/
 *.bin
 *.gguf

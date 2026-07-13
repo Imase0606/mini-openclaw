@@ -141,7 +141,15 @@ class AgentLoop:
                 if self.cancel_event.is_set():
                     return self._finish(messages, "任务已取消。", "cancelled", turn)
                 call_name = call.get("name") or ""
-                arguments = call.get("arguments", {})
+                raw_arguments = call.get("arguments", {})
+                arguments = raw_arguments if isinstance(raw_arguments, dict) else {}
+                arguments_error = call.get("arguments_error")
+                if not isinstance(raw_arguments, dict) and not arguments_error:
+                    arguments_error = {
+                        "type": "TypeError",
+                        "message": "工具参数必须是 JSON 对象",
+                        "length": 0,
+                    }
                 call_id = call.get("id") or f"call-{turn}-{len(messages)}"
                 self._emit(
                     "tool_started",
@@ -188,7 +196,11 @@ class AgentLoop:
                     if self.tracer:
                         self.tracer.record("planning", "repeat_guard", ok=False, output=obs)
                 else:
-                    obs, failed = self._execute_tool(call_name, arguments)
+                    obs, failed = self._execute_tool(
+                        call_name,
+                        arguments,
+                        arguments_error=arguments_error,
+                    )
 
                 outcome = "denied" if str(obs).startswith("[权限层]") else "error" if failed else "done"
                 self._emit(
@@ -294,11 +306,14 @@ class AgentLoop:
                     content += delta
                     self._emit("text_delta", text=delta)
                 elif kind == "tool_call":
-                    tool_calls.append({
+                    call = {
                         "id": chunk.get("id"),
                         "name": chunk.get("name"),
                         "arguments": chunk.get("arguments") or {},
-                    })
+                    }
+                    if chunk.get("arguments_error"):
+                        call["arguments_error"] = chunk["arguments_error"]
+                    tool_calls.append(call)
                 elif kind == "usage":
                     usage = {
                         "prompt_tokens": int(chunk.get("prompt_tokens") or 0),
@@ -324,10 +339,27 @@ class AgentLoop:
                 )
         return {"role": "assistant", "content": content, "tool_calls": tool_calls, "usage": usage}
 
-    def _execute_tool(self, name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
+    def _execute_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        arguments_error: dict[str, Any] | None = None,
+    ) -> tuple[str, bool]:
         self._emit("status", status="executing", tool=name)
-        verdict, reason = self.tool_policy.authorize(name, arguments)
         tool = self.registry.get(name)
+        parameter_error = self._parameter_error(name, arguments, arguments_error)
+        if parameter_error:
+            if self.tracer:
+                self.tracer.record(
+                    "parameters",
+                    name,
+                    ok=False,
+                    input_data=arguments_error or {"missing": self._missing_required(name, arguments)},
+                    output=parameter_error,
+                )
+            return parameter_error, True
+        verdict, reason = self.tool_policy.authorize(name, arguments)
         if verdict == "deny":
             obs = f"[权限层] 拒绝：{reason}"
             if self.tracer:
@@ -369,6 +401,44 @@ class AgentLoop:
                     continue
                 return f"工具 {name} 执行出错：{type(exc).__name__}: {exc}", True
         return f"工具 {name} 执行失败", True
+
+    def _parameter_error(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        arguments_error: dict[str, Any] | None,
+    ) -> str:
+        if arguments_error:
+            error_type = str(arguments_error.get("type") or "JSONDecodeError")
+            position = arguments_error.get("position")
+            length = int(arguments_error.get("length") or 0)
+            if error_type == "OutputTruncated":
+                return (
+                    f"[参数层] 工具 {name} 参数因模型输出长度上限被截断，"
+                    f"已接收参数长度 {length}。请缩短内容后重新生成完整参数。"
+                )
+            location = f"，错误位置 {position}" if position is not None else ""
+            return (
+                f"[参数层] 工具 {name} 参数 JSON 解析失败：{error_type}"
+                f"{location}，参数长度 {length}。请重新生成完整的 JSON 对象参数。"
+            )
+        missing = self._missing_required(name, arguments)
+        if missing:
+            return f"[参数层] 工具 {name} 缺少必需参数：{', '.join(missing)}。请补齐后重试。"
+        return ""
+
+    def _missing_required(self, name: str, arguments: dict[str, Any]) -> list[str]:
+        for schema in self.tool_schemas:
+            function = schema.get("function") or {}
+            if function.get("name") != name:
+                continue
+            parameters = function.get("parameters") or {}
+            required = parameters.get("required") or []
+            return [
+                str(key) for key in required
+                if key not in arguments or arguments.get(key) is None or arguments.get(key) == ""
+            ]
+        return []
 
     @staticmethod
     def _is_transient(exc: Exception) -> bool:
@@ -472,13 +542,23 @@ class AgentLoop:
         return visible
 
     def _emit_artifacts(self, tool_name: str, observation: str) -> None:
-        if tool_name != "kb_write":
+        if tool_name not in {"kb_write", "video_frame_ocr"}:
             return
+        raw = observation
+        if raw.startswith("<external "):
+            start = raw.find("{")
+            end = raw.rfind("}")
+            raw = raw[start:end + 1] if start >= 0 and end >= start else ""
         try:
-            payload = json.loads(observation)
+            payload = json.loads(raw)
         except json.JSONDecodeError:
             return
-        for key in ("markdown_path", "metadata_path", "transcript_path", "visual_notes_path", "chunks_path"):
+        keys = (
+            ("visual_notes_path", "contact_sheet_path")
+            if tool_name == "video_frame_ocr"
+            else ("markdown_path", "metadata_path", "transcript_path", "visual_notes_path", "chunks_path")
+        )
+        for key in keys:
             path = payload.get(key)
             if path:
                 self._emit("artifact", kind_name=key, path=str(path))

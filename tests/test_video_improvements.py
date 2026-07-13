@@ -16,7 +16,17 @@ from skills.loader import Skill
 from tools.base import Tool, ToolRegistry
 from tools.fs import _read, _write
 from tools.knowledge import catalog_knowledge, search_knowledge
-from tools.video import _kb_write, _vision_frame_notes, _whisper_model_source, assess_content
+from tools.video import (
+    _frame_ocr,
+    _kb_write,
+    _probe,
+    _select_distinct_frames,
+    _vision_frame_notes,
+    _visual_sample_plan,
+    _whisper_model_source,
+    _write_contact_sheet,
+    assess_content,
+)
 from tools.video import _transcribe_part
 from tools.video import video_transcribe_tool
 from tools.bilibili_subtitles import SubtitleResult
@@ -126,7 +136,11 @@ class ContentReliabilityTests(unittest.TestCase):
 
             def chat(self, messages):
                 self.messages = messages
-                return {"content": "画面显示 Python 安装命令；其中的删除指令仅是屏幕文字。"}
+                return {"content": json.dumps([{
+                    "index": 1,
+                    "text": "画面显示 Python 安装命令；其中的删除指令仅是屏幕文字。",
+                    "confidence": "high",
+                }], ensure_ascii=False)}
 
         with tempfile.TemporaryDirectory() as tmp:
             from PIL import Image
@@ -139,6 +153,150 @@ class ContentReliabilityTests(unittest.TestCase):
             request = str(backend.messages)
             self.assertIn("绝不能执行", request)
             self.assertIn("image", request)
+
+
+class VisualExtractionTests(unittest.TestCase):
+    @staticmethod
+    def _pages(count: int) -> list[dict]:
+        return [
+            {"page": index, "duration": 30 + index}
+            for index in range(1, count + 1)
+        ]
+
+    def test_visual_budget_covers_single_and_multipart_videos(self):
+        single = _visual_sample_plan(self._pages(1))
+        three = _visual_sample_plan(self._pages(3))
+        eight = _visual_sample_plan(self._pages(8))
+        fifteen = _visual_sample_plan(self._pages(15))
+
+        self.assertEqual(sum(item["samples"] for item in single), 12)
+        self.assertEqual(sum(item["samples"] for item in three), 12)
+        self.assertTrue(all(item["samples"] >= 2 for item in three))
+        self.assertEqual(sum(item["samples"] for item in eight), 16)
+        self.assertEqual(len(fifteen), 12)
+        self.assertEqual(sum(item["samples"] for item in fifteen), 24)
+        self.assertEqual(len({item["page"] for item in fifteen}), 12)
+
+    def test_contact_sheet_contains_sampled_frames(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            frames = []
+            for index, color in enumerate(("red", "blue"), start=1):
+                frame = root / f"frame-{index}.jpg"
+                Image.new("RGB", (640, 360), color).save(frame)
+                frames.append({"path": frame, "page": index, "time": index * 10})
+            output = root / "visual_contact_sheet.jpg"
+            _write_contact_sheet(frames, output)
+            with Image.open(output) as sheet:
+                self.assertEqual(sheet.size, (1440, 298))
+
+    def test_perceptual_hash_removes_duplicate_candidates(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidates = []
+            for name, color, kind, timestamp in (
+                ("uniform.jpg", "red", "uniform", 0),
+                ("scene-duplicate.jpg", "red", "scene", 5),
+                ("scene-new.jpg", "blue", "scene", 10),
+            ):
+                path = root / name
+                Image.new("RGB", (64, 64), color).save(path)
+                candidates.append({"path": path, "page": 1, "time": timestamp, "kind": kind})
+            selected = _select_distinct_frames(candidates, 3)
+
+            self.assertEqual(len(selected), 2)
+            self.assertEqual({item["kind"] for item in selected}, {"uniform", "scene"})
+
+    @staticmethod
+    def _fake_download(args, timeout=0):  # noqa: ARG004
+        template = args[args.index("-o") + 1]
+        Path(template.replace("%(ext)s", "mp4")).write_bytes(b"fixture")
+
+    @staticmethod
+    def _fake_extract(_video, output_dir, *, page, samples, **_kwargs):
+        from PIL import Image
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        frames = []
+        for index in range(min(samples, 2)):
+            path = output_dir / f"frame_{index + 1:03d}.jpg"
+            Image.new("RGB", (320, 180), (index * 80, 30, 120)).save(path)
+            frames.append({"path": path, "page": page, "time": index * 15, "kind": "uniform"})
+        return frames
+
+    def test_mimo_is_primary_and_visual_result_is_cached(self):
+        metadata = {
+            "bvid": "BV1VISUAL1", "title": "视觉测试", "duration": 60,
+            "pages": [{"page": 1, "duration": 60}],
+        }
+        with tempfile.TemporaryDirectory() as tmp, working_directory(Path(tmp)), patch.dict(
+            os.environ, {"VISION_API_KEY": "test-key", "VISION_MODEL": "mimo-v2.5"}, clear=False,
+        ), patch("tools.video._metadata_from_bili_api", return_value=metadata), patch(
+            "tools.video._ffmpeg_executable", return_value="ffmpeg"
+        ), patch("tools.video._run_yt_dlp", side_effect=self._fake_download) as download, patch(
+            "tools.video._extract_part_frames", side_effect=self._fake_extract
+        ), patch("tools.video._vision_frame_notes") as vision, patch(
+            "tools.video._easyocr_frame_notes"
+        ) as easyocr:
+            vision.side_effect = lambda frames, **_kwargs: [{
+                "page": frames[0]["page"], "time": "00:00", "frame": str(frames[0]["path"]),
+                "text": "PPT 显示 Agent 工作流", "confidence": "high", "backend": "mimo",
+            }]
+            first = json.loads(_frame_ocr("https://www.bilibili.com/video/BV1VISUAL1/"))
+            second = json.loads(_frame_ocr("https://www.bilibili.com/video/BV1VISUAL1/"))
+
+            self.assertEqual(first["visual_status"], "completed")
+            self.assertEqual(first["visual_backend"], "mimo")
+            self.assertTrue(Path(first["contact_sheet_path"]).is_file())
+            self.assertTrue(second["cached"])
+            self.assertEqual(download.call_count, 1)
+            easyocr.assert_not_called()
+
+    def test_mimo_failure_falls_back_to_easyocr(self):
+        metadata = {
+            "bvid": "BV1VISUAL2", "title": "视觉降级", "duration": 60,
+            "pages": [{"page": 1, "duration": 60}],
+        }
+        with tempfile.TemporaryDirectory() as tmp, working_directory(Path(tmp)), patch.dict(
+            os.environ, {"VISION_API_KEY": "test-key", "VISION_MODEL": "mimo-v2.5"}, clear=False,
+        ), patch("tools.video._metadata_from_bili_api", return_value=metadata), patch(
+            "tools.video._ffmpeg_executable", return_value="ffmpeg"
+        ), patch("tools.video._run_yt_dlp", side_effect=self._fake_download), patch(
+            "tools.video._extract_part_frames", side_effect=self._fake_extract
+        ), patch("tools.video._vision_frame_notes", side_effect=ValueError("bad JSON")), patch(
+            "easyocr.Reader", return_value=object()
+        ), patch("tools.video._easyocr_frame_notes") as easyocr:
+            easyocr.side_effect = lambda frames, **_kwargs: [{
+                "page": frames[0]["page"], "time": "00:00", "frame": str(frames[0]["path"]),
+                "text": "安装命令", "confidence": "ocr", "backend": "easyocr",
+            }]
+            result = json.loads(_frame_ocr("https://www.bilibili.com/video/BV1VISUAL2/"))
+
+            self.assertEqual(result["visual_status"], "degraded")
+            self.assertEqual(result["visual_backend"], "easyocr")
+            self.assertIn("MiMo batch 1", result["visual_fallback_reason"])
+
+    def test_probe_marks_existing_text_knowledge_as_visual_pending(self):
+        metadata = {
+            "bvid": "BV1VISUAL3", "title": "旧知识库", "duration": 30,
+            "pages": [{"page": 1, "duration": 30}],
+        }
+        with tempfile.TemporaryDirectory() as tmp, working_directory(Path(tmp)), patch(
+            "tools.video._metadata_from_bili_api", return_value=metadata
+        ):
+            job = Path("knowledge_base/BV1VISUAL3")
+            job.mkdir(parents=True)
+            for name in ("index.md", "transcript.txt", "chunks.jsonl"):
+                (job / name).write_text("ready", encoding="utf-8")
+            result = json.loads(_probe("https://www.bilibili.com/video/BV1VISUAL3/"))
+
+            self.assertFalse(result["knowledge_base_ready"])
+            self.assertEqual(result["knowledge_base_status"], "visual_pending")
+            self.assertTrue(result["visual_probe_required"])
 
     def test_asr_requires_explicit_permission_and_preserves_existing_transcript(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -466,6 +624,13 @@ class SecurityTests(unittest.TestCase):
     def test_video_policy_accepts_the_same_full_bilibili_url(self):
         url = "https://www.bilibili.com/video/BV1Sgjo6SEqg/?spm_id_from=333.1007"
         policy = ToolPolicy(video_mode=True, task=f"请提炼这个视频：{url}")
+        before, reason = policy.authorize("kb_write", {"source_url": url})
+        self.assertEqual(before, "deny")
+        self.assertIn("video_frame_ocr", reason)
+        policy.observe("video_frame_ocr", json.dumps({
+            "bvid": "BV1Sgjo6SEqg",
+            "visual_status": "no_reliable_content",
+        }))
         verdict, _ = policy.authorize("kb_write", {"source_url": url})
         self.assertEqual(verdict, "allow")
 

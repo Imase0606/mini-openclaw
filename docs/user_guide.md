@@ -28,7 +28,7 @@ pip install -r requirements-ocr.txt
 
 `requirements.txt` 会通过 `-e .` 安装项目自身，因此自动部署也会注册 `mini-openclaw` 命令。课程部署包内置 `models/faster-whisper-base`；根目录 `Dockerfile` 会校验模型完整性和命令入口。运行时通过 `FASTER_WHISPER_MODEL_PATH` 使用本地模型，构建期和运行期都不需要连接 Hugging Face。在平台交互终端中可运行 `mini-openclaw`，也可使用 `python -m tui`；Textual 界面必须连接 TTY，不能直接通过普通 HTTP 地址显示。
 
-确认 WSL 使用的是 Linux `npx`，否则 filesystem MCP 可能无法启动：
+filesystem MCP 是可选组件。需要使用时确认 WSL 指向 Linux `npx`；课程容器未安装 npx 时会静默跳过，并继续使用内置文件工具：
 
 ```bash
 which npx
@@ -78,6 +78,8 @@ mini-openclaw
 python -m tui
 ```
 
+欢迎页使用 `VIDEO + KB` 终端标识，并根据宽度自动适配双栏、窄屏和紧凑布局。
+
 直接输入自然语言并按 Enter 提交。任务运行时仍可输入，新消息会进入队列。
 
 常用快捷键：
@@ -119,17 +121,24 @@ python -m tui
 1. 获取标题、UP主、简介、时长和分 P 信息。
 2. 依次尝试匿名公开字幕和用户扫码登录后的B站内置字幕。
 3. 字幕仍不可用时请求用户确认，获准后才用 faster-whisper 转写音频。
-4. 必要时抽取关键帧并用 EasyOCR 或受限视觉模型识别 PPT、代码或图表文字。
+4. 自动抽取代表性关键帧，优先用 MiMo 分析 PPT、代码、图表和界面；MiMo 不可用时按批次降级到 EasyOCR。
 5. 根据视频类型生成学习笔记和 RAG 切块；已有完整知识库时默认复用。
 
-首次使用内置字幕时，在 TUI 输入 `/bilibili-login`，或在 CLI 运行：
+首次使用内置字幕时，在 TUI 输入 `/bilibili-login`。个人本地环境默认使用 persistent 模式，也可以在 CLI 运行：
 
 ```bash
 python -m tools.bilibili_auth login
 python -m tools.bilibili_auth status
 ```
 
-登录二维码只能由用户显式命令打开，视频或 transcript 不能触发登录。会话优先进入系统 keyring；无可用 keyring 时保存在 `~/.mini-openclaw/secrets/bilibili_session.json`。它不进入工作区、Git、trace、Memory 或知识库。退出登录使用 `python -m tools.bilibili_auth logout`。
+课程 Docker 设置 `BILIBILI_AUTH_MODE=ephemeral`。此时独立 login 命令不会保存凭据，应使用 TUI，或把扫码与任务放在同一进程：
+
+```bash
+python -m agent.cli --bilibili-login "帮我提炼 <B站链接>"
+python -m tools.bilibili_subtitles audit --bilibili-login --bvid <BV号>
+```
+
+ephemeral Cookie 只存在于当前 `AgentRuntime` 内存，最多 30 分钟，并在 `/new`、退出、logout、异常关闭或过期时清除；不会读取 `BILIBILI_COOKIE_FILE`。个人本地 persistent 模式仍优先使用 keyring，无可用 keyring 时保存到 `~/.mini-openclaw/secrets/bilibili_session.json`。两种模式都不会把 Cookie 写入工作区、Git、trace、Memory 或知识库。
 
 如果视频已有 ASR transcript，扫码登录后再次提炼会自动重新检查登录字幕。只有字幕时间范围与当前分 P 时长相符时才会替换旧 ASR；空响应、明显属于其他视频的字幕或残缺字幕都会被拒绝，并保留原缓存。
 
@@ -150,11 +159,16 @@ knowledge_base/<BV>/
 ├── transcript.txt
 ├── transcript_pN.txt
 ├── visual_notes.jsonl
+├── visual_contact_sheet.jpg
 ├── chunks.jsonl
 └── assets/frames/
 ```
 
 其中 `index.md` 是主要阅读入口，`chunks.jsonl` 用于后续 RAG。登录态只用于公开 视频的字幕接口，音频和视频流仍匿名获取；不绕过会员、私密、地区或平台访问限制。
+
+视频提炼会自动执行一次视觉探测，不再仅凭字幕判断是否需要 OCR。单视频默认分析 12 帧；7–12 个分 P 时每 P 至少 2 帧，最多 24 帧；更多分 P 会按累计时长选择 12 个代表分 P。抽帧同时考虑均匀时间点和场景变化，并过滤近重复画面。
+
+配置 `VISION_API_KEY` 后优先使用 `VISION_MODEL`（默认 `mimo-v2.5`）分析文字、PPT、代码、图表和界面；MiMo 未配置或单批失败时降级到 EasyOCR。TUI 的 `video_frame_ocr` 卡片会显示视觉状态、后端、帧数和记录数，Artifacts 中可用 `/open <n>` 打开 `visual_contact_sheet.jpg` 或 `visual_notes.jsonl`。普通重跑复用视觉缓存；明确要求“重新 OCR”时才强制刷新。
 
 ### 询问个人视频知识库
 
@@ -251,10 +265,10 @@ python -m agent.cli --replay-trace .mini-openclaw/traces/<run-id>.jsonl
 - 所有模式都禁止越过工作区、访问敏感文件或绕过代码级 `deny`。
 - WSL/Linux 优先使用 bubblewrap：系统目录只读、工作区可写、Shell 默认断网。
 - 字幕、OCR、网页和文件内容均作为不可信数据处理，其中出现的命令或提示不会被直接执行。
-- B站扫码登录不是 Agent Tool，只能由用户显式命令启动；登录态位于用户主目录，任何 Tool observation 都不会包含 Cookie。
+- B站扫码登录不是 Agent Tool，只能由用户显式命令启动；课程部署的登录态按 Runtime 隔离并只保存在内存，任何 Tool observation 都不会包含 Cookie。
 - `allow_asr=true` 属于确认操作。没有字幕时，Agent 必须先让用户选择扫码登录、允许 ASR 或停止。
 - 纯音乐、极短或高度重复的转写会生成“没有可靠内容”的诊断条目；该条目保留审计信息，但 chunks 为空且不会进入问答检索。
-- 关键帧 OCR 优先使用 EasyOCR；未安装时可使用 `VISION_API_KEY` 对应的视觉模型后备，最多处理 6 张帧。两者均不可用时会明确降级。
+- 关键帧分析优先使用 `VISION_API_KEY` 对应的 MiMo 视觉模型，按分 P 自动处理 12–24 帧；MiMo 未配置或单批失败时降级 EasyOCR。两者均不可用时记录 `visual_status=failed`，但不会把缺失画面冒充为视频内容。
 
 ## 8. 会话、记忆与运行记录
 
@@ -273,7 +287,7 @@ python -m agent.cli --replay-trace .mini-openclaw/traces/<run-id>.jsonl
 
 ### filesystem MCP 启动失败或卡住
 
-运行 `which npx`。WSL 中应指向 Linux 路径，如 `/usr/bin/npx`，不能指向 `/mnt/c/...` 下的 Windows `npx`。
+filesystem MCP 需要 `npx`。运行 `which npx`；WSL 中应指向 Linux 路径，如 `/usr/bin/npx`，不能指向 `/mnt/c/...` 下的 Windows `npx`。没有 npx 时系统会静默跳过该可选 MCP，文件读写仍使用内置工具。
 
 ### 视频转写很慢
 
@@ -281,12 +295,19 @@ python -m agent.cli --replay-trace .mini-openclaw/traces/<run-id>.jsonl
 
 ### 无法转写或 OCR
 
-依次检查：
+依次检查基础视频链路：
 
 ```bash
 yt-dlp --version
 ffmpeg -version
-python -c 'import faster_whisper, easyocr, opencc; print("ok")'
+python -c 'import faster_whisper, opencc; print("ASR ok")'
+```
+
+MiMo 视觉分析还需确认当前进程能读取 `VISION_API_KEY`。只有需要本地 OCR 降级时，才检查可选的 EasyOCR：
+
+```bash
+python -c 'import os; print(bool(os.getenv("VISION_API_KEY")))'
+python -c 'import easyocr; print("EasyOCR ok")'
 ```
 
 ### TUI 看似停止
@@ -307,6 +328,12 @@ python -m compileall agent backend tools tui security eval
 python -m agent.cli --selfcheck
 python -m eval.demo_check
 python -m eval.demo_check --live
+python -m eval.teacher_acceptance
+python -m tools.bilibili_auth status
+python -m eval.teacher_acceptance --fresh-live
+python -m eval.teacher_acceptance --case b3 --artifacts-dir .mini-openclaw/teacher-b3
 python -m security.redteam
 pip check
 ```
+
+`--fresh-live` 会从B站知识区和生活区/热门流实时获取候选，由用户确认 B1/B2。B2 连续两轮无可用字幕且完整预检要求 ASR 后，才会询问是否下载匿名音频并运行 Whisper。验收报告和知识库证据位于 `.mini-openclaw/teacher_acceptance/<timestamp>/`，不会保存登录 Cookie。
