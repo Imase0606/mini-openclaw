@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -53,6 +54,30 @@ class PermissionBackend:
             }
         else:
             yield {"type": "content", "delta": "操作已拒绝。"}
+        yield {"type": "usage", "prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
+        yield {"type": "done"}
+
+
+class VideoTranscribeBackend:
+    model = "video-transcribe-test"
+
+    def __init__(self):
+        self.calls = 0
+
+    def chat_stream(self, messages, tools=None):
+        self.calls += 1
+        if self.calls == 1:
+            yield {
+                "type": "tool_call",
+                "id": "video-1",
+                "name": "video_transcribe",
+                "arguments": {
+                    "url": "https://www.bilibili.com/video/BV1f9786bE3H/",
+                    "allow_asr": False,
+                },
+            }
+        else:
+            yield {"type": "content", "delta": "subtitle extraction completed"}
         yield {"type": "usage", "prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
         yield {"type": "done"}
 
@@ -213,6 +238,62 @@ class TUITests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(target.exists())
             card = screen.query_one(ToolCallCard)
             self.assertIn("[denied]", str(card.title))
+
+    async def test_video_transcribe_accepts_allow_asr_through_tui_worker(self):
+        metadata = {
+            "bvid": "BV1f9786bE3H",
+            "title": "TUI subtitle fixture",
+            "duration": 16,
+            "cid": 123,
+            "pages": [{"page": 1, "cid": 123, "part": "P1", "duration": 16}],
+        }
+        part = {
+            "ok": True,
+            "status": "completed",
+            "source": "subtitle:bilibili:authenticated:zh-CN",
+            "content": "[00:00-00:08] first subtitle segment\n[00:08-00:16] second subtitle segment\n",
+            "segments": 2,
+            "subtitle_status": "authenticated_found",
+            "auth_status": "valid",
+            "auth_used": True,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp) / "knowledge_base" / metadata["bvid"]
+            job.mkdir(parents=True)
+            with patch("tools.video._job_dir", return_value=job), patch(
+                "tools.video._metadata_from_bili_api", return_value=metadata
+            ), patch("tools.video._transcribe_part", return_value=(part, None)):
+                app = MiniOpenClawApp(self.runtime_factory)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    screen = app.screen
+                    assert screen.runtime is not None
+                    backend = VideoTranscribeBackend()
+                    screen.runtime.text_backend = backend
+                    prompt = screen.query_one("#prompt-input")
+                    prompt.text = (
+                        "请提炼这个视频 https://www.bilibili.com/video/BV1f9786bE3H/"
+                    )
+                    await pilot.press("enter")
+                    for _ in range(160):
+                        await pilot.pause(0.05)
+                        if not screen.busy:
+                            break
+
+                    self.assertFalse(
+                        screen.busy,
+                        (
+                            f"backend_calls={backend.calls}, "
+                            f"worker_done={bool(screen.worker and screen.worker.done_event.is_set())}, "
+                            f"poller_done={bool(screen.poller and screen.poller.done())}"
+                        ),
+                    )
+                    card = screen.query_one(ToolCallCard)
+                    result = str(card.query_one(".tool-result").render())
+                    self.assertIn("[ok]", str(card.title))
+                    self.assertNotIn("unexpected keyword argument", result)
+                    self.assertIn('"subtitle_status": "authenticated_found"', result)
 
 
 if __name__ == "__main__":

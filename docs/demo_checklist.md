@@ -8,6 +8,7 @@
 | B 任务完成 | 随机 B站链接生成知识库 | `knowledge_base/BV1j9MP6wEV9/` |
 | C 主循环/规划 | `--plan` 展示 Todo、正确终止 | `agent/loop.py`、规划测试 |
 | D MCP/Skills | echo/filesystem MCP 与 `video-summary` 召回 | `mcp/`、`skills/video-summary/` |
+| D 登录字幕 | 用户扫码后真实内置字幕命中，ASR 调用为 0 | `bilibili_auth`、`bilibili_subtitles` |
 | D 个人知识扩展 | 自然语言检索历次视频并附回看位置 | `kb_search`、`personal-video-knowledge` |
 | E 知识治理 | 展示重复状态、软删除与恢复，确认永久清理受保护 | `kb_catalog`、管理 Skill、治理测试 |
 | E 记忆/鲁棒性 | 两个进程验证记忆；故意错误路径后恢复 | Memory、compaction、重试测试 |
@@ -25,6 +26,8 @@
 - 清空无关终端，预先记下最后一个成功 trace 路径。
 - 确认 `v1`、`v3`、`final` tags 已推送，工作树干净。
 - 运行 `python -m eval.rag_evaluation`，确认 Recall@K、MRR、nDCG、无答案识别和 10k chunk 延迟达标。
+- 运行 `python -m eval.teacher_acceptance`，确认字幕、ASR、空内容、注入和 OCR 后备 5 项全部通过。
+- 运行 `python -m tools.bilibili_auth status`；若演示内置字幕，必须为 `valid`，并提前确认测试 BV 确有字幕。
 
 ## 验收命令
 
@@ -32,6 +35,8 @@
 python -m agent.cli --selfcheck
 python -m unittest discover -s tests -v
 python -m security.redteam
+python -m eval.teacher_acceptance
+python -m eval.teacher_acceptance --subtitle-auth-live --bvid <BV>
 python -m eval.demo_check
 python -m eval.demo_check --live
 python -m eval.demo_check --release

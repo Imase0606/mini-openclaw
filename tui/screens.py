@@ -36,7 +36,7 @@ from tui.completion import (
 )
 from tui.file_link import open_artifact
 from tui.input_area import PromptInput
-from tui.modals import ChoiceModal
+from tui.modals import BilibiliLoginModal, ChoiceModal
 from tui.sidebar import SidePanel
 from tui.state import ArtifactRecord, PermissionRequest, QueuedRequest, TUISettings
 from tui.widgets import ToolCallCard
@@ -116,6 +116,7 @@ class MainScreen(Screen):
         self.activity_tool = ""
         self.activity_turn = 0
         self.pending_turn_message = False
+        self.bilibili_login_task: asyncio.Task | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="workspace"):
@@ -141,6 +142,8 @@ class MainScreen(Screen):
             self.worker.cancel()
         if self.poller and not self.poller.done():
             self.poller.cancel()
+        if self.bilibili_login_task and not self.bilibili_login_task.done():
+            self.bilibili_login_task.cancel()
         self._save_session()
         if self.runtime:
             self.runtime.close()
@@ -479,6 +482,12 @@ class MainScreen(Screen):
             else:
                 self.settings.video_type = value
                 self._save_session()
+        elif command == "/bilibili-login":
+            await self._bilibili_login()
+        elif command == "/bilibili-status":
+            await self._bilibili_status()
+        elif command == "/bilibili-logout":
+            await self._bilibili_logout()
         elif command in {"/trace", "/cost"}:
             assert self.runtime is not None
             if not self.runtime.tracer:
@@ -544,6 +553,64 @@ class MainScreen(Screen):
             await self._notice(f"Image unavailable: {exc}", "error")
             return
         self.pending_images.append(path)
+
+    async def _bilibili_login(self) -> None:
+        if self.bilibili_login_task and not self.bilibili_login_task.done():
+            await self._notice("Bilibili login is already waiting for confirmation", "warning")
+            return
+        from tools.bilibili_auth import begin_qr_login, render_qr_ascii
+
+        try:
+            challenge = await asyncio.to_thread(begin_qr_login)
+            qr_text = await asyncio.to_thread(render_qr_ascii, challenge.url)
+        except Exception as exc:
+            await self._notice(f"Bilibili login unavailable: {type(exc).__name__}: {exc}", "error")
+            return
+        modal = BilibiliLoginModal(qr_text)
+        self.app.push_screen(modal)
+        self.bilibili_login_task = asyncio.create_task(self._poll_bilibili_login(challenge, modal))
+
+    async def _poll_bilibili_login(self, challenge, modal: BilibiliLoginModal) -> None:
+        from tools.bilibili_auth import poll_qr_once
+
+        labels = {
+            "waiting_scan": "Scan with the Bilibili mobile app",
+            "scanned_waiting_confirmation": "Scanned. Confirm login on your phone.",
+            "success": "Login saved. Built-in subtitles are now available.",
+            "expired": "QR code expired. Close and run /bilibili-login again.",
+            "error": "Login request failed. Close and retry.",
+        }
+        try:
+            for _ in range(100):
+                if modal.is_mounted:
+                    break
+                await asyncio.sleep(0.05)
+            if not modal.is_mounted:
+                return
+            for _ in range(90):
+                if not modal.is_mounted:
+                    return
+                result = await asyncio.to_thread(poll_qr_once, challenge)
+                status = str(result.get("status") or "error")
+                modal.update_status(labels.get(status, status))
+                if status in {"success", "expired", "error"}:
+                    return
+                await asyncio.sleep(2)
+            modal.update_status("Login timed out. Close and retry.")
+        finally:
+            challenge.client.close()
+
+    async def _bilibili_status(self) -> None:
+        from tools.bilibili_auth import auth_status
+
+        result = await asyncio.to_thread(auth_status)
+        await self._notice(f"Bilibili subtitle login: {result['status']}")
+
+    async def _bilibili_logout(self) -> None:
+        from tools.bilibili_auth import logout
+
+        await asyncio.to_thread(logout)
+        await self._notice("Bilibili subtitle login removed", "success")
 
     async def _open_artifact(self, args: list[str]) -> None:
         if not args or not args[0].isdigit():

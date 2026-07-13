@@ -106,6 +106,25 @@ Verification on the current seven-video cache produced 95 timestamp-aware chunks
 
 RAG 2.0 adds schema-versioned content hashes, SimHash duplicate hints, confidence filtering, per-video result caps and lightweight MMR. Knowledge governance supports confirmed soft-delete/restore/export/permanent purge through `personal-video-knowledge-manager`; generated exports and trash remain ignored. The committed 30-query fixture currently scores Recall@6 1.0, MRR 0.9792, nDCG@6 0.9846 and no-answer accuracy 1.0; the 10k chunk benchmark is below the 500ms p95 target in WSL.
 
+## Teacher Acceptance And Content Reliability
+
+- `python -m eval.teacher_acceptance` passes 5/5 deterministic cases: subtitle priority, ASR fallback, insufficient content, prompt injection and restricted vision OCR.
+- The live run on `BV1DDjL63ESB` passed from a temporary empty workspace: no public subtitle, local Whisper source, 69 segments, 7 chunks, `content_status=sufficient` and `indexed=true`.
+- Insufficient transcripts now produce a fixed diagnostic `index.md`, zero chunks and `indexed=false`; model-supplied summaries are ignored and the entry cannot appear in `kb_search`.
+- OCR prefers EasyOCR and falls back to at most six compressed frames through the configured vision model. If neither backend exists, it reports an explicit downgrade.
+- The controlled Skill ablation ran three scenarios per group. Both groups had 100% no-content accuracy and zero unsupported-claim proxy hits; Skill improved source traceability from 33.3% to 100% and diagnostic persistence from 0% to 100%, with about 10.5 seconds additional mean latency.
+- Current verification: 95/95 unit tests, redteam 7/7, teacher offline 5/5, teacher live 6/6, default demo 20/20.
+
+## Bilibili Authenticated Subtitles
+
+- The original anonymous-only yt-dlp path did not access common Bilibili built-in/AI subtitles; all seven cached videos used ASR. Do not describe the previous fixture as a real Bilibili subtitle test.
+- Users now run `python -m tools.bilibili_auth login` or `/bilibili-login` and scan with the Bilibili mobile app. Login is not an Agent Tool.
+- Credentials prefer an available system keyring and otherwise use `~/.mini-openclaw/secrets/bilibili_session.json` with restricted permissions. Cookie values never enter the workspace, trace, metadata or exports.
+- Subtitle order is anonymous player API, authenticated player API, yt-dlp subtitle fallback, then user-confirmed ASR. `allow_asr=true` is a confirm action.
+- `python -m tools.bilibili_subtitles audit` reports anonymous/authenticated availability without modifying knowledge.
+- Authenticated subtitle fixtures and the real `--subtitle-auth-live` gate both pass. On 2026-07-13, `BV1Sgjo6SEqg` passed three consecutive authenticated runs with `auth_status=valid`, `subtitle_status=authenticated_found`, `source=subtitle:bilibili:authenticated:ai-zh`, and `allow_asr=false`.
+- A live Bilibili popular-feed sample audited eight newly discovered videos: four returned duration-consistent authenticated subtitles and four incomplete/mismatched responses were rejected. Full `allow_asr=false` acceptance passed for `BV1cMNM6BELJ`, `BV1beM76pEBL`, `BV1qLNg66ExY`, and `BV1TgNT67EE5`; the previously intermittent `BV1qLNg66ExY` then passed three consecutive runs after bounded sampling was raised to ten attempts with early exit.
+
 ## Next Actions
 
 1. Keep the currently successful deployment if video ASR and TUI work; redeploy the offline ZIP only when deterministic rebuilding is needed.

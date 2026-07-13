@@ -5,19 +5,21 @@ description: 当用户提供 B站 Bilibili b23.tv BV 视频链接、字幕或文
 
 # B站视频总结与知识库生成
 
-面向无需登录即可访问的 B站公开视频，提取可验证内容并生成给人阅读的 Markdown 学习笔记与 RAG 切块。
+面向公开可访问的 B站视频，匿名读取公开字幕，或使用用户显式扫码保存的登录态读取内置字幕，并生成可验证的 Markdown 学习笔记与 RAG 切块。登录态只用于字幕，不用于受限媒体。
 
 ## 工作流
 
 1. 调用 `video_probe` 获取标题、UP主、简介、发布时间、时长、BV 号和分 P 信息。
    - 若返回 `knowledge_base_ready=true`，且用户没有明确要求刷新、重新转写、重新 OCR 或更换视频类型模板，立即调用 `read` 读取返回的 `index_path`，然后直接返回已有知识库摘要和文件路径；不要再次调用 `video_transcribe` 或 `kb_write`。
    - 只有知识库未就绪或用户明确要求重新生成时，才继续以下完整流程。
-2. 调用一次 `video_transcribe`：
-   - 优先使用字幕；没有字幕时使用 faster-whisper 本地 ASR。
+2. 首先调用 `video_transcribe`，保持 `allow_asr=false`：
+   - 优先使用匿名字幕，其次使用用户扫码登录后的B站内置字幕；两者都不可用时，只有用户确认后才使用 faster-whisper 本地 ASR。
    - 多分 P 视频会自动保存 `transcript_pN.txt` 并合并为 `transcript.txt`。不要自行拼接 `?p=N` 重复调用或移动分稿。
    - 默认复用已有完整转写；只有用户明确要求重新提取时才传 `force=true`。
+   - 若返回 `status=asr_confirmation_required`，可先建议用户运行 `/bilibili-login` 获取内置字幕；若继续使用 ASR，则再次调用 `video_transcribe` 并传 `allow_asr=true`，由权限层向用户确认。不得自行假定用户同意下载音频和运行 Whisper。
    - 成功后调用 `read` 完整读取返回的 `transcript_path`，不要只根据工具返回的 excerpt 总结。
    - 若部分分 P 失败，只总结成功内容并在信息缺口中列出失败分 P；若全部失败，停止正文总结。
+   - 若返回 `content_status=insufficient`，不得编写摘要、知识点或建议；直接调用一次 `kb_write` 写入诊断条目，并明确说明“没有提取到足够的可靠内容”。
 3. 完整读取 transcript 后判断视频类型。若 CLI 或用户已明确指定类型，服从指定；否则选择：
    - `tutorial`：教程、操作演示、分步骤实践。
    - `knowledge`：课程、科普、概念或原理讲解。
@@ -82,6 +84,7 @@ description: 当用户提供 B站 Bilibili b23.tv BV 视频链接、字幕或文
 
 - 只基于工具返回、用户提供内容、明确可见网页内容或本地文件总结。
 - 无字幕、无转写、无法访问视频时，不得编造内容或声称已观看完整视频。
+- 转写内容不足时服从工具的 `content_status` 和 `evidence_metrics`；不得使用标题、简介或模型常识补足视频正文。
 - 推测内容使用“可能”“推测”“待确认”，并与事实分开。
 - 保留来源 URL、标题层级、分 P、时间戳或来源段落，方便检索和溯源。
 - 不绕过登录、会员、付费、私密、地区或反爬限制。

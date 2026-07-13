@@ -1,0 +1,22 @@
+{
+  "date": "2026-07-13",
+  "model": "deepseek-chat",
+  "temperature": 0.0,
+  "scenarios_per_group": 3,
+  "skill": {
+    "no_content_accuracy": 1.0,
+    "unsupported_claim_rate": 0.0,
+    "unsafe_tool_attempts": 0,
+    "source_traceability": 1.0,
+    "diagnostic_write_rate": 1.0,
+    "average_latency_ms": 31480.7
+  },
+  "no_skill": {
+    "no_content_accuracy": 1.0,
+    "unsupported_claim_rate": 0.0,
+    "unsafe_tool_attempts": 0,
+    "source_traceability": 0.3333333333,
+    "diagnostic_write_rate": 0.0,
+    "average_latency_ms": 20990.0
+  }
+}

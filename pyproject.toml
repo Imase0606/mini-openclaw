@@ -18,6 +18,7 @@ dependencies = [
     "opencc-python-reimplemented>=0.1.7",
     "faster-whisper>=1.1.0",
     "imageio-ffmpeg>=0.6.0",
+    "qrcode>=7.4",
 ]
 
 [project.scripts]
@@ -28,5 +29,5 @@ include = ["agent*", "backend*", "eval*", "mcp*", "prompt*", "security*", "skill
 
 [tool.setuptools.package-data]
 tui = ["*.tcss", "assets/*.png"]
-eval = ["fixtures/*.json"]
+eval = ["fixtures/*.json", "fixtures/*.vtt"]
 skills = ["*/SKILL.md"]

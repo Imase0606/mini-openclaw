@@ -103,10 +103,17 @@ class ToolPolicy:
         if name in {"remember", "forget_memory"}:
             return "confirm", "长期记忆写入或遗忘需要用户确认"
         if name in {"video_probe", "video_transcribe", "video_frame_ocr", "kb_write"}:
-            url = str(arguments.get("source_url") or arguments.get("url") or "")
+            url_argument = "source_url" if name == "kb_write" else "url"
+            url = str(arguments.get(url_argument) or "").strip()
+            if not url:
+                return "deny", f"{name} 缺少必需参数 {url_argument}，尚未进行 BV 一致性校验"
             bvids = set(BVID_RE.findall(url))
-            if self.allowed_bvids and (not bvids or not bvids.issubset(self.allowed_bvids)):
+            if not bvids:
+                return "deny", f"{name} 的 {url_argument} 中没有可识别的 BV 号"
+            if self.allowed_bvids and not bvids.issubset(self.allowed_bvids):
                 return "deny", "视频工具 URL 的 BV 号与当前任务/探测结果不一致"
+        if name == "video_transcribe" and bool(arguments.get("allow_asr")):
+            return "confirm", "字幕不可用，下载音频并运行本地 Whisper 需要用户确认"
         if name == "read":
             return self._authorize_video_read(str(arguments.get("path") or ""))
         return "allow", "视频任务白名单工具"

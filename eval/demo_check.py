@@ -29,6 +29,7 @@ from agent.tracer import Tracer, replay
 from backend.fake_backend import FakeBackend
 from mcp.client import MCPClient
 from security.redteam import run_cases
+from eval.teacher_acceptance import run_offline as run_teacher_acceptance
 from skills.loader import load_skills, match_skills
 from tools.base import Tool, ToolRegistry, build_default_registry
 from tools.memory import register_memory_tools
@@ -150,6 +151,17 @@ def _check_compaction() -> tuple[bool, str]:
     after = estimate_tokens(compacted)
     has_memo = any(item.get("_history_memo") for item in compacted)
     return has_memo and after < before, f"estimated tokens {before} -> {after}"
+
+
+def _check_bilibili_auth() -> tuple[bool, str]:
+    try:
+        from tools.bilibili_auth import render_qr_ascii, session_path
+
+        rendered = render_qr_ascii("https://example.invalid/short-lived-qr")
+        outside_workspace = not session_path().resolve().is_relative_to(ROOT.resolve())
+        return bool(rendered.strip()) and outside_workspace, "QR ready; credentials outside workspace"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
 
 
 def _check_documents() -> tuple[bool, str]:
@@ -331,6 +343,11 @@ def run_checks(*, release: bool = False, live: bool = False) -> list[Check]:
 
     redteam = run_cases(ROOT)
     add("F", "安全红队", (all(result.passed for result in redteam), f"{sum(result.passed for result in redteam)}/{len(redteam)}"))
+
+    teacher = run_teacher_acceptance()
+    teacher_passed = sum(bool(item["passed"]) for item in teacher)
+    add("B", "教师视频验收", (teacher_passed == len(teacher), f"{teacher_passed}/{len(teacher)}"))
+    add("D", "B站扫码字幕", _check_bilibili_auth())
 
     candidates = [ROOT / "knowledge_base/BV1KjoxBoEQJ", ROOT / "knowledge_base/BV1j9MP6wEV9"]
     kb = next((path for path in candidates if (path / "transcript.txt").is_file()), None)

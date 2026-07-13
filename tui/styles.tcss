@@ -356,6 +356,37 @@ PermissionModal, ChoiceModal {
     background: #ff928b;
 }
 
+#bilibili-login-dialog {
+    width: 66;
+    height: auto;
+    max-height: 95%;
+    padding: 1 2;
+    border: solid #78d6a3;
+    background: #111314;
+}
+
+#bilibili-login-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#bilibili-login-qr {
+    width: auto;
+    height: auto;
+    max-height: 42;
+    overflow: auto;
+}
+
+#bilibili-login-status {
+    margin-top: 1;
+    color: #b8bdc1;
+}
+
+#bilibili-login-actions {
+    height: 3;
+    align: center middle;
+}
+
 #choice-options {
     height: auto;
     max-height: 22;

@@ -331,6 +331,17 @@ def index_video(
     owns_connection = connection is None
     db = connection or _connect(index_path)
     try:
+        if str(metadata.get("content_status") or "sufficient") != "sufficient":
+            db.execute("DELETE FROM videos WHERE bvid = ?", (metadata["bvid"],))
+            if owns_connection:
+                db.commit()
+            return {
+                "chunks": 0,
+                "indexed": False,
+                "content_status": str(metadata.get("content_status") or "insufficient"),
+                "duplicate_of": "",
+                "near_duplicates": [],
+            }
         db.execute("SAVEPOINT index_one_video")
         try:
             bvid = metadata["bvid"]
@@ -474,6 +485,17 @@ def ensure_index(*, kb_root: Path = KB_ROOT, index_path: Path = INDEX_PATH) -> d
 def rebuild_index(*, kb_root: Path = KB_ROOT, index_path: Path = INDEX_PATH) -> dict[str, int]:
     index_path.unlink(missing_ok=True)
     return ensure_index(kb_root=kb_root, index_path=index_path)
+
+
+def remove_from_index(bvid: str, *, index_path: Path = INDEX_PATH) -> bool:
+    """Remove a diagnostic or unavailable video from the derived search cache."""
+    db = _open_resilient(index_path)
+    try:
+        cursor = db.execute("DELETE FROM videos WHERE bvid = ?", (str(bvid),))
+        db.commit()
+        return bool(cursor.rowcount)
+    finally:
+        db.close()
 
 
 def _jaccard(left: set[str], right: set[str]) -> float:
@@ -811,6 +833,8 @@ def catalog_knowledge(
         db.close()
     query_terms = set(tokenize(query))
     selected = []
+    counts = Counter(str(row["video_type"]) for row in rows)
+    diagnostic_count = 0
     for row in rows:
         if video_type and row["video_type"] != video_type:
             continue
@@ -822,15 +846,50 @@ def catalog_knowledge(
         item["near_duplicates"] = json.loads(item.get("near_duplicates") or "[]")
         item["status"] = "duplicate" if item.get("duplicate_of") else "active"
         selected.append(item)
-    counts = Counter(row["video_type"] for row in rows)
+    indexed_bvids = {str(row["bvid"]) for row in rows}
+    if kb_root.is_dir():
+        for job in sorted(path for path in kb_root.iterdir() if path.is_dir() and path.name != ".trash"):
+            metadata_path = job / "metadata.json"
+            if not metadata_path.is_file():
+                continue
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            bvid = str(metadata.get("bvid") or job.name)
+            if bvid in indexed_bvids or metadata.get("content_status") != "insufficient":
+                continue
+            item = {
+                "bvid": bvid,
+                "source_url": str(metadata.get("source_url") or ""),
+                "title": str(metadata.get("title") or bvid),
+                "author": str(metadata.get("author") or ""),
+                "video_type": str(metadata.get("video_type") or "general"),
+                "chunk_count": 0,
+                "duplicate_of": "",
+                "near_duplicates": [],
+                "status": "diagnostic",
+                "content_status": "insufficient",
+                "content_reason": str(metadata.get("content_reason") or ""),
+            }
+            diagnostic_count += 1
+            counts[item["video_type"]] += 1
+            if video_type and item["video_type"] != video_type:
+                continue
+            if author and author.lower() not in item["author"].lower():
+                continue
+            if query_terms and not query_terms.intersection(tokenize(f"{item['title']} {item['author']}")):
+                continue
+            selected.append(item)
     trash = _trash_records(kb_root)
     limit = max(1, min(int(limit), 200))
     return {
         "ok": True,
-        "video_count": len(rows),
+        "video_count": len(rows) + diagnostic_count,
         "chunk_count": sum(int(row["chunk_count"]) for row in rows),
         "active_count": sum(not bool(row["duplicate_of"]) for row in rows),
         "duplicate_count": sum(bool(row["duplicate_of"]) for row in rows),
+        "diagnostic_count": diagnostic_count,
         "trashed_count": len(trash),
         "video_types": dict(sorted(counts.items())),
         "videos": selected[:limit],

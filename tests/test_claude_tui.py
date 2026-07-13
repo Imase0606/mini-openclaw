@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import time
+import threading
 import tomllib
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
@@ -20,6 +21,7 @@ from tui.chat_view import ActivityLine, AssistantMessage, WelcomePanel
 from tui.composer import Composer
 from tui.completion import CompletionMenu
 from tui.input_area import PromptInput
+from tui.modals import BilibiliLoginModal
 from tui.screens import MainScreen
 
 
@@ -38,11 +40,14 @@ class SlowBackend:
 
     def __init__(self):
         self.calls = 0
+        self.first_call_started = threading.Event()
+        self.release_first_call = threading.Event()
 
     def chat_stream(self, messages, tools=None):
         self.calls += 1
         if self.calls == 1:
-            time.sleep(2.0)
+            self.first_call_started.set()
+            self.release_first_call.wait(timeout=10)
         yield {"type": "content", "delta": f"reply-{self.calls}"}
         yield {"type": "usage", "prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
         yield {"type": "done"}
@@ -210,6 +215,27 @@ class ClaudeStyleTUITests(unittest.IsolatedAsyncioTestCase):
     def runtime_factory() -> AgentRuntime:
         return AgentRuntime(trace_enabled=False, enable_mcp=False)
 
+    async def test_bilibili_login_command_opens_nonblocking_qr_modal(self):
+        class Client:
+            def close(self):
+                return None
+
+        challenge = SimpleNamespace(url="https://example.test/qr", client=Client())
+        with patch("tools.bilibili_auth.begin_qr_login", return_value=challenge), patch(
+            "tools.bilibili_auth.render_qr_ascii", return_value="QR-CONTENT"
+        ), patch("tools.bilibili_auth.poll_qr_once", return_value={"status": "expired"}):
+            app = MiniOpenClawApp(self.runtime_factory)
+            async with app.run_test(size=(120, 40)) as pilot:
+                prompt = app.screen.query_one(PromptInput)
+                prompt.text = "/bilibili-login"
+                await pilot.press("enter")
+                await pilot.pause(0.5)
+                self.assertIsInstance(app.screen, BilibiliLoginModal)
+                self.assertIn("expired", str(app.screen.query_one("#bilibili-login-status").render()).lower())
+                await pilot.press("escape")
+                await pilot.pause(0.2)
+                self.assertIsInstance(app.screen, MainScreen)
+
     async def test_slash_file_completion_permission_cycle_and_drawer(self):
         app = MiniOpenClawApp(self.runtime_factory)
         async with app.run_test(size=(120, 40)) as pilot:
@@ -292,11 +318,18 @@ class ClaudeStyleTUITests(unittest.IsolatedAsyncioTestCase):
             prompt = screen.query_one("#prompt-input")
             prompt.text = "first"
             await pilot.press("enter")
-            await pilot.pause(0.05)
+            for _ in range(40):
+                if backend.first_call_started.is_set():
+                    break
+                await pilot.pause(0.05)
+            self.assertTrue(backend.first_call_started.is_set())
             prompt.text = "second"
             await pilot.press("enter")
-            await pilot.pause(0.05)
-            self.assertEqual(len(screen.request_queue), 1)
+            await pilot.pause()
+            try:
+                self.assertEqual(len(screen.request_queue), 1)
+            finally:
+                backend.release_first_call.set()
             for _ in range(80):
                 await pilot.pause(0.05)
                 if not screen.busy and not screen.request_queue:

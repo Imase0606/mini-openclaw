@@ -142,7 +142,9 @@ class KnowledgeIndexTests(unittest.TestCase):
                 "author": "课程作者",
             }, ensure_ascii=False), encoding="utf-8")
             job.joinpath("transcript.txt").write_text(
-                "# transcript_source: fixture\n[00:12-00:30] 使用检索增强生成回答。\n",
+                "# transcript_source: fixture\n"
+                "[00:12-00:22] 个人视频知识库先检索历史转写中的相关片段。\n"
+                "[00:22-00:30] 然后使用检索增强生成带来源定位的回答。\n",
                 encoding="utf-8",
             )
             payload = json.loads(_kb_write(

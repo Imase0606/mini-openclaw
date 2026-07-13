@@ -67,7 +67,7 @@ def confirm_tool_call(name: str, arguments: dict) -> bool:
         return False
     visible = {
         key: value for key, value in arguments.items()
-        if key in {"path", "command", "url", "timeout"}
+        if key in {"path", "command", "url", "timeout", "allow_asr", "model_size"}
     }
     if "command" in visible:
         visible["command"] = str(visible["command"])[:200]

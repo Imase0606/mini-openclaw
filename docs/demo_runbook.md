@@ -8,6 +8,8 @@
 conda activate openclaw
 python -m agent.cli --selfcheck
 python -m eval.demo_check
+python -m eval.teacher_acceptance
+python -m tools.bilibili_auth status
 ```
 
 说明默认检查会真实执行核心工具、MCP、compaction、重试和红队，不只是 import。打开 `mini-openclaw`，指出模型、权限模式、context 和工作目录。

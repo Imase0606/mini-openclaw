@@ -40,7 +40,9 @@ flowchart TD
 
 ## 视频数据流
 
-`video_probe -> video_transcribe -> read transcript -> 可选 OCR -> 类型判断 -> kb_write`。知识点只能来自 metadata、transcript 和 OCR；搜索结果不能冒充视频内容。产物统一位于 `knowledge_base/<BV>/`。
+`video_probe -> 匿名字幕 -> 扫码登录字幕 -> 用户确认 ASR -> read transcript -> 可选 OCR -> 类型判断 -> kb_write`。登录入口不注册为 Agent Tool；登录态只发送给B站字幕接口，媒体下载保持匿名。知识点只能来自 metadata、transcript 和 OCR。
+
+字幕/ASR 完成后由 Tool 统计有效片段、字符、语音时长和重复率。证据不足时 `kb_write` 忽略模型传入的摘要与要点，固定生成诊断型 `index.md`、零 chunks，并从检索索引移除；因此“没内容不编造”不依赖模型服从提示词。OCR 优先使用本地 EasyOCR，缺失时最多向已配置视觉模型发送 6 张压缩关键帧，两者都不可用时明确降级。
 
 `kb_write` 按完整字幕段和分 P 生成带时间范围的 chunks，并增量更新 `.mini-openclaw/video_knowledge.sqlite3`。该数据库只是派生缓存，原始知识文件仍是事实来源，可随时执行 `python -m tools.knowledge --reindex` 重建。
 

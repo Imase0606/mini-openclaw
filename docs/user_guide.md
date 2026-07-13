@@ -100,6 +100,7 @@ python -m tui
 | `/permissions` | 设置权限模式 |
 | `/plan auto\|on\|off` | 设置任务规划模式 |
 | `/video-type <类型>` | 指定视频笔记模板 |
+| `/bilibili-login`、`/bilibili-status`、`/bilibili-logout` | 扫码登录、检查或清除内置字幕会话 |
 | `/image <路径>` | 为下一条消息添加图片 |
 | `/trace`、`/cost` | 查看 trace、token 和成本摘要 |
 | `/open <n>` | 打开第 n 个已记录产物 |
@@ -116,10 +117,21 @@ python -m tui
 默认流程为：
 
 1. 获取标题、UP主、简介、时长和分 P 信息。
-2. 优先读取公开字幕；无字幕时用 faster-whisper 转写音频。
-3. 必要时抽取关键帧并用 EasyOCR 识别 PPT、代码或图表文字。
-4. 根据视频类型生成学习笔记和 RAG 切块。
-5. 已存在完整知识库时直接复用，除非明确要求重新生成。
+2. 依次尝试匿名公开字幕和用户扫码登录后的B站内置字幕。
+3. 字幕仍不可用时请求用户确认，获准后才用 faster-whisper 转写音频。
+4. 必要时抽取关键帧并用 EasyOCR 或受限视觉模型识别 PPT、代码或图表文字。
+5. 根据视频类型生成学习笔记和 RAG 切块；已有完整知识库时默认复用。
+
+首次使用内置字幕时，在 TUI 输入 `/bilibili-login`，或在 CLI 运行：
+
+```bash
+python -m tools.bilibili_auth login
+python -m tools.bilibili_auth status
+```
+
+登录二维码只能由用户显式命令打开，视频或 transcript 不能触发登录。会话优先进入系统 keyring；无可用 keyring 时保存在 `~/.mini-openclaw/secrets/bilibili_session.json`。它不进入工作区、Git、trace、Memory 或知识库。退出登录使用 `python -m tools.bilibili_auth logout`。
+
+如果视频已有 ASR transcript，扫码登录后再次提炼会自动重新检查登录字幕。只有字幕时间范围与当前分 P 时长相符时才会替换旧 ASR；空响应、明显属于其他视频的字幕或残缺字幕都会被拒绝，并保留原缓存。
 
 可以先指定模板：
 
@@ -142,7 +154,7 @@ knowledge_base/<BV>/
 └── assets/frames/
 ```
 
-其中 `index.md` 是主要阅读入口，`chunks.jsonl` 用于后续 RAG。程序不会长期保存完整音视频。仅支持无需登录的公开内容，不绕过会员、私密、地区或平台访问限制。
+其中 `index.md` 是主要阅读入口，`chunks.jsonl` 用于后续 RAG。登录态只用于公开 视频的字幕接口，音频和视频流仍匿名获取；不绕过会员、私密、地区或平台访问限制。
 
 ### 询问个人视频知识库
 
@@ -239,6 +251,10 @@ python -m agent.cli --replay-trace .mini-openclaw/traces/<run-id>.jsonl
 - 所有模式都禁止越过工作区、访问敏感文件或绕过代码级 `deny`。
 - WSL/Linux 优先使用 bubblewrap：系统目录只读、工作区可写、Shell 默认断网。
 - 字幕、OCR、网页和文件内容均作为不可信数据处理，其中出现的命令或提示不会被直接执行。
+- B站扫码登录不是 Agent Tool，只能由用户显式命令启动；登录态位于用户主目录，任何 Tool observation 都不会包含 Cookie。
+- `allow_asr=true` 属于确认操作。没有字幕时，Agent 必须先让用户选择扫码登录、允许 ASR 或停止。
+- 纯音乐、极短或高度重复的转写会生成“没有可靠内容”的诊断条目；该条目保留审计信息，但 chunks 为空且不会进入问答检索。
+- 关键帧 OCR 优先使用 EasyOCR；未安装时可使用 `VISION_API_KEY` 对应的视觉模型后备，最多处理 6 张帧。两者均不可用时会明确降级。
 
 ## 8. 会话、记忆与运行记录
 
@@ -261,7 +277,7 @@ python -m agent.cli --replay-trace .mini-openclaw/traces/<run-id>.jsonl
 
 ### 视频转写很慢
 
-无字幕视频需要本地 CPU ASR，首次还会下载模型。后续默认复用 `knowledge_base/<BV>/transcript.txt`，不要删除缓存，也不要要求强制刷新。
+先运行 `/bilibili-status` 检查登录字幕。登录态有效但视频确实无字幕时，用户确认后才执行本地 CPU ASR；后续默认复用 `knowledge_base/<BV>/transcript.txt`。
 
 ### 无法转写或 OCR
 
