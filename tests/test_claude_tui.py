@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
+from agent.events import AgentEvent
 from agent.runtime import AgentRuntime, RuntimeOptions, load_model_profiles
 from agent.session import MAX_SESSION_BYTES, SessionStore
 from backend.client import DeepSeekBackend
@@ -354,6 +355,24 @@ class ClaudeStyleTUITests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("video_probe", str(activity.render()))
             screen._set_activity("completed")
             self.assertFalse(activity.display)
+
+    async def test_tool_card_stays_above_activity_line(self):
+        app = MiniOpenClawApp(self.runtime_factory)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            message = await screen.query_one("ChatContainer").add_assistant_message()
+            screen.current_message = message
+            await screen._dispatch_agent_event(AgentEvent(
+                "tool_started",
+                {"call_id": "call-order", "name": "read", "arguments": {"path": "README.md"}},
+            ))
+            await pilot.pause()
+            children = list(message.children)
+            self.assertLess(
+                children.index(screen.tool_cards["call-order"]),
+                children.index(message.query_one(ActivityLine)),
+            )
 
     async def test_busy_input_queues_and_runs_in_order(self):
         app = MiniOpenClawApp(self.runtime_factory)

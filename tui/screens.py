@@ -300,7 +300,7 @@ class MainScreen(Screen):
             self.tool_cards[call_id] = card
             if self.current_message:
                 self.current_message.mark_tool_output()
-                await self.current_message.mount(card)
+                await self.current_message.mount_tool_card(card)
                 self._follow_output()
             self._set_activity("running tool", str(data.get("name") or "tool"))
         elif event.kind == "tool_finished":
