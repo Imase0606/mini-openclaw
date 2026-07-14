@@ -354,6 +354,68 @@ class AgentRuntime:
             register_planning_tools(registry, todo)
         return registry
 
+    def _resolve_fs_dir(self) -> str:
+        """跨平台解析 MCP filesystem 目录路径。
+
+        处理三类路径格式：
+          - 原生 Windows:  D:/path  或 D:\\path
+          - WSL:           /mnt/d/path（WSL 下原生可用，Windows 下转 D:/path）
+          - Git Bash:      /d/path（转 D:/path）
+
+        规则：
+          1. 优先读 MCP_FS_DIR 环境变量；未设置则用项目根目录
+          2. 类 Unix /<drive>/... 路径按平台正确转换
+          3. 解析为绝对路径后校验目录存在性；不存在则回退到 ROOT
+          4. 每次回退都打印可见警告
+        """
+        raw = (os.environ.get("MCP_FS_DIR") or "").strip()
+        if not raw:
+            return str(ROOT)
+
+        raw = raw.replace("\\", "/")
+
+        # ── WSL 路径: /mnt/<drive>/rest/of/path ──
+        #    WSL 下原生有效，Windows 下转为 <drive>:/rest/of/path
+        if raw.startswith("/mnt/"):
+            parts = raw.split("/")
+            # ["", "mnt", "X", "rest", "of", "path"]
+            if len(parts) >= 4 and len(parts[2]) == 1 and parts[2].isalpha():
+                drive = parts[2].upper()
+                rest = "/".join(parts[3:])
+                # WSL: /mnt/d/... 是原生 Linux 路径，目录存在则不做转换
+                # Windows / Git Bash: 转为 D:/... 后传给 npx.cmd
+                if sys.platform == "linux":
+                    if not os.path.isdir(raw):
+                        raw = f"{drive}:/{rest}"
+                else:
+                    raw = f"{drive}:/{rest}"
+
+        # ── Git Bash 路径: /<drive>/rest/of/path（仅限 Windows）──
+        elif raw.startswith("/") and (os.name == "nt" or sys.platform == "win32"):
+            parts = raw.split("/")
+            # ["", "X", "rest", "of", "path"]
+            if len(parts) >= 3 and len(parts[1]) == 1 and parts[1].isalpha():
+                drive = parts[1].upper()
+                rest = "/".join(parts[2:])
+                raw = f"{drive}:/{rest}"
+
+        # ── 解析为绝对路径 ──
+        try:
+            resolved = str(Path(raw).resolve())
+        except (ValueError, OSError):
+            resolved = ""
+
+        # ── 回退机制 ──
+        if not resolved or not os.path.isdir(resolved):
+            fallback = str(ROOT)
+            msg = f"MCP_FS_DIR '{raw}' 不存在或不可用，回退到项目根目录 '{fallback}'"
+            self._emit("notice", level="warning", message=msg)
+            if self.event_sink is None:
+                print(f"[⚠] {msg}", file=sys.stderr)
+            return fallback
+
+        return resolved
+
     def _ensure_mcp(self) -> None:
         if self._mcp_started:
             return
@@ -366,25 +428,7 @@ class AgentRuntime:
         # 不是 /mnt/，所以不会被 WSL 检测拦截。这里放宽条件：只要 npx 能找到就尝试启动。
         npx_usable = bool(npx_path and (os.name == "nt" or not npx_path.startswith("/mnt/")))
         if npx_usable:
-            # 解析 filesystem 目录：优先 MCP_FS_DIR 环境变量，否则使用项目根目录
-            fs_dir_raw = os.environ.get("MCP_FS_DIR", "") or ""
-            if fs_dir_raw:
-                # Windows/Git Bash 下转换 WSL 风格路径（/mnt/d/... → D:/...）
-                # 注意：Git Bash (MSYS2) 中 os.name == "posix"，所以不能仅靠 os.name 判断
-                if fs_dir_raw.startswith("/mnt/") and (os.name == "nt" or sys.platform == "win32"):
-                    parts = fs_dir_raw.replace("\\", "/").strip("/").split("/")
-                    if len(parts) >= 2 and len(parts[1]) == 1:
-                        fs_dir_raw = f"{parts[1].upper()}:/{'/'.join(parts[2:])}"
-                fs_path = str(Path(fs_dir_raw).resolve())
-                if not os.path.isdir(fs_path):
-                    fallback = str(ROOT)
-                    msg = f"MCP_FS_DIR '{fs_path}' 不存在，回退到项目根目录 '{fallback}'"
-                    self._emit("notice", level="warning", message=msg)
-                    if self.event_sink is None:
-                        print(f"[⚠] {msg}", file=sys.stderr)
-                    fs_path = fallback
-            else:
-                fs_path = str(ROOT)
+            fs_path = self._resolve_fs_dir()
             candidates.append((
                 "filesystem",
                 ["npx", "-y", "@modelcontextprotocol/server-filesystem", fs_path],
