@@ -7,7 +7,7 @@ import time
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
-from textual.widgets import Markdown, Static
+from textual.widgets import Button, Markdown, Static
 from textual.widget import Widget
 
 
@@ -252,7 +252,7 @@ class ActivityLine(Static):
 
 class AssistantMessage(Vertical):
     """A single assistant response, composed of a Markdown body, optional tool
-    call cards, and an animated ActivityLine pinned at the bottom."""
+    call cards, copy actions, and an ActivityLine pinned at the bottom."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -262,13 +262,18 @@ class AssistantMessage(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Markdown("")
+        actions = Horizontal(classes="assistant-actions")
+        actions.display = False
+        with actions:
+            copy = Button("Copy", classes="copy-response")
+            copy.tooltip = "Copy response"
+            yield copy
         yield ActivityLine()
 
     async def mount_tool_card(self, card: Widget) -> None:
-        """Mount a tool-call card before the ActivityLine so the status bar
-        always stays at the very bottom of this message."""
-        activity = self.query_one(ActivityLine)
-        await self.mount(card, before=activity)
+        """Mount tool output before message actions and the activity line."""
+        actions = self.query_one(".assistant-actions")
+        await self.mount(card, before=actions)
 
     async def append_token(self, text: str) -> None:
         self.content += text
@@ -287,6 +292,18 @@ class AssistantMessage(Vertical):
     async def finalize(self) -> None:
         self._flush()
         self.clear_activity()
+        self.query_one(".assistant-actions").display = bool(self.content.strip())
+
+    def copy_content(self) -> bool:
+        if not self.content.strip():
+            return False
+        self.app.copy_to_clipboard(self.content)
+        self.notify("Copied response")
+        return True
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.has_class("copy-response"):
+            self.copy_content()
 
     @property
     def has_visible_content(self) -> bool:

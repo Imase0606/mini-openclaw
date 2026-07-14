@@ -23,7 +23,11 @@ from typing import Any, Iterator
 import httpx
 
 
-def _decode_tool_arguments(raw: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+def _decode_tool_arguments(
+    raw: Any,
+    *,
+    include_excerpt: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Decode tool arguments without hiding malformed provider output."""
     if raw is None or raw == "":
         return {}, None
@@ -38,7 +42,7 @@ def _decode_tool_arguments(raw: Any) -> tuple[dict[str, Any], dict[str, Any] | N
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        return {}, {
+        error = {
             "type": type(exc).__name__,
             "message": exc.msg,
             "position": exc.pos,
@@ -46,6 +50,12 @@ def _decode_tool_arguments(raw: Any) -> tuple[dict[str, Any], dict[str, Any] | N
             "column": exc.colno,
             "length": len(raw),
         }
+        if include_excerpt:
+            start = max(0, exc.pos - 60)
+            end = min(len(raw), exc.pos + 60)
+            error["excerpt"] = json.dumps(raw[start:end], ensure_ascii=False)[1:-1]
+            error["excerpt_start"] = start
+        return {}, error
     if not isinstance(parsed, dict):
         return {}, {
             "type": "TypeError",
@@ -210,7 +220,10 @@ class DeepSeekBackend:
     ) -> Iterator[dict[str, Any]]:
         for index in sorted(accumulated):
             entry = accumulated[index]
-            arguments, arguments_error = _decode_tool_arguments(entry["arguments"])
+            arguments, arguments_error = _decode_tool_arguments(
+                entry["arguments"],
+                include_excerpt=entry["name"] == "kb_write",
+            )
             if finish_reason == "length":
                 arguments = {}
                 arguments_error = {
@@ -293,7 +306,10 @@ class DeepSeekBackend:
         tool_calls = []
         for tc in (msg.get("tool_calls") or []):
             fn = tc.get("function", {})
-            args, arguments_error = _decode_tool_arguments(fn.get("arguments"))
+            args, arguments_error = _decode_tool_arguments(
+                fn.get("arguments"),
+                include_excerpt=fn.get("name") == "kb_write",
+            )
             if finish_reason == "length":
                 raw = fn.get("arguments")
                 args = {}

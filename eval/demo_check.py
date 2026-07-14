@@ -287,22 +287,6 @@ def _check_live_model(alias: str, *, with_image: bool = False) -> tuple[bool, st
         backend.close()
 
 
-def _check_live_filesystem_mcp() -> tuple[bool, str]:
-    client = MCPClient(
-        ["npx", "-y", "@modelcontextprotocol/server-filesystem", str(ROOT)],
-        name="filesystem-live",
-        startup_timeout=30,
-    )
-    try:
-        client.start()
-        names = [tool.get("name", "") for tool in client.list_tools()]
-        return bool(names) and any("read" in name for name in names), f"{len(names)} tools"
-    except Exception as exc:  # noqa: BLE001 - live readiness must report and continue
-        return False, f"{type(exc).__name__}: {exc}"
-    finally:
-        client.close()
-
-
 def run_checks(*, release: bool = False, live: bool = False) -> list[Check]:
     checks: list[Check] = []
 
@@ -404,7 +388,6 @@ def run_checks(*, release: bool = False, live: bool = False) -> list[Check]:
     if live:
         add("A", "DeepSeek 实时请求", _check_live_model("deepseek"))
         add("A", "MiMo 实时视觉", _check_live_model("mimo", with_image=True))
-        add("D", "filesystem MCP 实时握手", _check_live_filesystem_mcp())
 
     if release:
         add("H", "消融数据", _check_ablation())
@@ -425,7 +408,7 @@ def run_checks(*, release: bool = False, live: bool = False) -> list[Check]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", action="store_true", help="also validate tracked evidence, tags, and clean Git state")
-    parser.add_argument("--live", action="store_true", help="make minimal DeepSeek/MiMo requests and start filesystem MCP")
+    parser.add_argument("--live", action="store_true", help="make minimal DeepSeek/MiMo requests")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     args = parser.parse_args(argv)
     checks = run_checks(release=args.release, live=args.live)

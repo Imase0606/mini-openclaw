@@ -177,6 +177,15 @@ class VisualExtractionTests(unittest.TestCase):
         self.assertEqual(sum(item["samples"] for item in fifteen), 24)
         self.assertEqual(len({item["page"] for item in fifteen}), 12)
 
+    def test_visual_budget_scales_with_video_duration(self):
+        short = _visual_sample_plan([{"page": 1, "duration": 180}])
+        medium = _visual_sample_plan([{"page": 1, "duration": 420}])
+        long = _visual_sample_plan([{"page": 1, "duration": 900}])
+
+        self.assertEqual(sum(item["samples"] for item in short), 12)
+        self.assertEqual(sum(item["samples"] for item in medium), 14)
+        self.assertEqual(sum(item["samples"] for item in long), 24)
+
     def test_contact_sheet_contains_sampled_frames(self):
         from PIL import Image
 
@@ -210,6 +219,37 @@ class VisualExtractionTests(unittest.TestCase):
 
             self.assertEqual(len(selected), 2)
             self.assertEqual({item["kind"] for item in selected}, {"uniform", "scene"})
+
+    def test_distinct_frame_selection_covers_full_timeline(self):
+        candidates = [
+            {"path": Path(f"uniform-{index}.jpg"), "page": 1, "time": index * 6, "kind": "uniform"}
+            for index in range(35)
+        ] + [
+            {"path": Path(f"scene-{index}.jpg"), "page": 1, "time": index, "kind": "scene"}
+            for index in range(36)
+        ]
+
+        def distinct_hash(path: Path) -> tuple[int, tuple[int, int, int]]:
+            index = int(path.stem.rsplit("-", 1)[1])
+            seed = index + (100 if path.stem.startswith("scene") else 0)
+            return (
+                seed * 0x9E3779B97F4A7C15 & ((1 << 64) - 1),
+                (seed * 23 % 256, seed * 47 % 256, seed * 89 % 256),
+            )
+
+        with patch(
+            "tools.video._image_dhash",
+            side_effect=distinct_hash,
+        ):
+            selected = _select_distinct_frames(candidates, 12, duration=209)
+
+        self.assertEqual(len(selected), 12)
+        self.assertLessEqual(selected[0]["time"], 18)
+        self.assertGreaterEqual(selected[-1]["time"], 190)
+        self.assertEqual(
+            {min(11, int(item["time"] * 12 / 209)) for item in selected},
+            set(range(12)),
+        )
 
     @staticmethod
     def _fake_download(args, timeout=0):  # noqa: ARG004
@@ -524,6 +564,44 @@ class VideoTemplateTests(unittest.TestCase):
                 for heading in headings:
                     self.assertIn(f"## {heading}", markdown)
                 self.assertNotIn("## 按时间/段落整理", markdown)
+
+    def test_array_notes_and_sections_are_preserved_as_markdown(self):
+        with tempfile.TemporaryDirectory() as tmp, working_directory(Path(tmp)):
+            result = json.loads(_kb_write(
+                source_url="https://www.bilibili.com/video/BV1ARRAYNOTES/",
+                transcript=(
+                    "[00:00-00:08] 视频提出尊重边界是健康关系的基础。\n"
+                    "[00:08-00:16] 两个真实案例用于支持主要论点。"
+                ),
+                content_digest="视频讨论边界意识，并通过案例说明持续打扰造成的伤害。",
+                key_points=["尊重边界", "避免持续打扰"],
+                video_type="commentary",
+                sections={
+                    "position": "支持清晰边界",
+                    "arguments": ["持续打扰会破坏专注", "自主空间有助于建立信任"],
+                    "evidence": ["案例一", "案例二"],
+                    "conclusion": "应当尊重他人的专注空间",
+                },
+            ))
+            markdown = Path(result["markdown_path"]).read_text(encoding="utf-8")
+            self.assertIn("## 主要论点\n- 持续打扰会破坏专注", markdown)
+            self.assertIn("## 论据与案例\n- 案例一", markdown)
+            self.assertIn("- 尊重边界", markdown)
+
+    def test_invalid_section_item_type_is_rejected_explicitly(self):
+        with tempfile.TemporaryDirectory() as tmp, working_directory(Path(tmp)):
+            result = _kb_write(
+                source_url="https://www.bilibili.com/video/BV1BADSECTION/",
+                transcript=(
+                    "[00:00-00:08] 固定测试转写包含足够的可靠内容。\n"
+                    "[00:08-00:16] 第二段继续提供可验证内容。"
+                ),
+                video_type="commentary",
+                sections={"arguments": ["有效论点", 1]},  # type: ignore[list-item]
+            )
+            self.assertIn("[参数层]", result)
+            self.assertIn("sections.arguments", result)
+            self.assertFalse(Path("knowledge_base/BV1BADSECTION/index.md").exists())
 
     def test_unknown_type_falls_back_without_empty_sections(self):
         with tempfile.TemporaryDirectory() as tmp, working_directory(Path(tmp)):

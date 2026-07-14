@@ -29,7 +29,7 @@ description: 当用户提供 B站 Bilibili b23.tv BV 视频链接、字幕或文
    - `general`：证据不足、混合类型或无法可靠分类。
 4. 每个新视频或缺少视觉终态的旧知识库都必须调用一次 `video_frame_ocr`，不得只根据 transcript 猜测画面是否重要：
    - 默认复用已有视觉终态；用户明确要求重新 OCR、刷新画面或重新分析视觉内容时传 `force=true`。
-   - 工具会按分 P 自适应抽取最多 12-24 帧，优先使用 MiMo V2.5，失败时降级 EasyOCR。
+   - 工具会按视频时长和分 P 从完整时间轴自适应抽取 12-24 帧，优先使用 MiMo V2.5，失败时降级 EasyOCR。
    - `visual_status=completed` 或 `degraded` 且 `records>0` 时，调用 `read` 读取 `visual_notes_path`，并把画面信息作为 transcript 的补充。
    - `visual_status=no_reliable_content` 时继续总结，但明确说明关键帧未提供可靠补充。
    - `visual_status=failed` 时仍可基于可靠 transcript 继续，必须在信息缺口中写明视觉分析失败原因。
@@ -38,6 +38,7 @@ description: 当用户提供 B站 Bilibili b23.tv BV 视频链接、字幕或文
    - 传入 `source_url`、`transcript_path`、`metadata_path`，有 OCR 时再传 `visual_notes_path`。
    - `source_url` 必须逐字复制 `video_probe` 返回的 canonical URL，不要凭记忆重写或调换 BV 字符。
    - 填写 `video_type`、`content_digest`、`key_points` 和该类型对应的 `sections`。
+   - `key_points` 和列表型 `sections` 优先使用简短字符串数组；正文引用使用中文引号 `「」`，不要在 JSON 字符串中写未转义的 ASCII 双引号。
    - 仅在视频确有教程、方法论或可执行步骤时填写 `action_suggestions`。
 6. 返回 `knowledge_base/<BV>/index.md` 及相关文件路径，并说明内容依据、缺失信息和可信度。
    - `kb_write` 成功后不要重复调用；更新 Todo 后直接给出最终答复。

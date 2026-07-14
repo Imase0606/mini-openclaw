@@ -23,6 +23,7 @@ from agent.runtime import AgentRuntime, RuntimeOptions
 from agent.session import SessionStore
 from agent.tracer import redact_text
 from backend.multimodal import image_block
+from tui.artifact_preview import ArtifactPreviewModal
 from tui.chat_view import AssistantMessage, ChatContainer, WelcomePanel
 from tui.composer import Composer
 from tui.completion import (
@@ -34,7 +35,7 @@ from tui.completion import (
     replace_completion,
     workspace_files,
 )
-from tui.file_link import open_artifact
+from tui.file_link import open_artifact, resolve_artifact
 from tui.input_area import PromptInput
 from tui.modals import BilibiliLoginModal, ChoiceModal
 from tui.sidebar import SidePanel
@@ -305,13 +306,24 @@ class MainScreen(Screen):
             self._set_activity("running tool", str(data.get("name") or "tool"))
         elif event.kind == "tool_finished":
             card = self.tool_cards.get(str(data.get("call_id") or ""))
+            status = str(data.get("status") or "error")
+            result = redact_text(data.get("result"), max_chars=3000)
+            tool_name = str(data.get("name") or (card.tool_name if card else "tool"))
             if card:
+                display_status = (
+                    "retrying"
+                    if status == "error" and tool_name == "kb_write" and "[参数层]" in result
+                    else status
+                )
                 card.finish(
-                    str(data.get("status") or "error"),
-                    redact_text(data.get("result"), max_chars=3000),
+                    display_status,
+                    result,
                     int(data.get("duration_ms") or 0),
                 )
-            tool_name = str(data.get("name") or (card.tool_name if card else "tool"))
+            if status == "done":
+                for previous in self.tool_cards.values():
+                    if previous is not card and previous.tool_name == tool_name:
+                        previous.recover()
             self._set_activity("thinking", f"after {tool_name}")
             self._follow_output()
         elif event.kind == "todo_changed":
@@ -332,6 +344,9 @@ class MainScreen(Screen):
             await self._notice("Error: " + redact_text(data.get("message"), max_chars=1000), "error")
             self._set_activity("idle")
         elif event.kind == "run_finished":
+            for card in self.tool_cards.values():
+                if card.status == "retrying":
+                    card.finish("error", card.result, card.duration_ms)
             content = str(data.get("content") or "")
             if content.strip() and (
                 self.pending_turn_message
@@ -495,6 +510,8 @@ class MainScreen(Screen):
                 summary = self.runtime.tracer.summary()
                 text = json.dumps(summary, ensure_ascii=False) if command == "/cost" else f"{self.runtime.tracer.path}\n{json.dumps(summary, ensure_ascii=False)}"
                 await self._notice(text)
+        elif command == "/copy":
+            await self._copy_response(args)
         elif command == "/open":
             await self._open_artifact(args)
         elif command == "/quit":
@@ -522,6 +539,16 @@ class MainScreen(Screen):
             ChoiceModal("Select model", choices),
             lambda value: asyncio.create_task(self._choose_model(value)) if value else None,
         )
+
+    async def _copy_response(self, args: list[str]) -> None:
+        if args:
+            await self._notice("Usage: /copy", "error")
+            return
+        messages = [message for message in self.query(AssistantMessage) if message.content.strip()]
+        if not messages:
+            await self._notice("No completed response to copy", "warning")
+            return
+        messages[-1].copy_content()
 
     async def _set_permission(self, mode: str) -> None:
         if mode:
@@ -642,7 +669,16 @@ class MainScreen(Screen):
         if index < 0 or index >= len(self.artifacts):
             await self._notice("Artifact number does not exist", "error")
             return
-        ok, message = open_artifact(self.artifacts[index].path)
+        artifact_path = self.artifacts[index].path
+        try:
+            candidate = resolve_artifact(artifact_path)
+        except (OSError, ValueError) as exc:
+            await self._notice(f"Could not open: {exc}", "error")
+            return
+        if ArtifactPreviewModal.supports(candidate):
+            self.app.push_screen(ArtifactPreviewModal(candidate))
+            return
+        ok, message = open_artifact(artifact_path)
         await self._notice(("Opened: " if ok else "Could not open: ") + message, "success" if ok else "error")
 
     async def _new_session(self) -> None:

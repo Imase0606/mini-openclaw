@@ -9,7 +9,7 @@ import types
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from agent.loop import AgentLoop
 from agent.permissions import check
@@ -212,6 +212,20 @@ class ExternalAndNetworkTests(unittest.TestCase):
 
 
 class MCPTimeoutTests(unittest.TestCase):
+    def test_posix_npx_path_is_not_rewritten_to_windows_command(self):
+        client = MCPClient(["npx", "--version"], name="filesystem")
+        process = MagicMock()
+        process.poll.return_value = None
+        with patch("tools.mcp_client.os.name", "posix"), patch(
+            "tools.mcp_client.shutil.which", return_value="/usr/bin/npx"
+        ), patch(
+            "tools.mcp_client.subprocess.Popen", return_value=process
+        ) as popen, patch.object(client, "_rpc", return_value={}):
+            client.start()
+            command = popen.call_args.args[0]
+            self.assertEqual(command[0], "/usr/bin/npx")
+            client.close()
+
     def test_startup_timeout_cleans_up_process(self):
         client = MCPClient(
             [sys.executable, "-c", "import time; time.sleep(5)"],

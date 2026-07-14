@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import json
-import shutil
 import sys
 import threading
 import time
@@ -360,36 +359,18 @@ class AgentRuntime:
         self._mcp_started = True
         from tools.mcp_client import MCPClient, register_mcp_tools
 
-        candidates = [("echo", [sys.executable, str(ROOT / "mcp/echo_server.py")])]
-        npx_path = shutil.which("npx")
-        npx_usable = bool(npx_path and (os.name == "nt" or not npx_path.startswith("/mnt/")))
-        if npx_usable:
-            candidates.append((
-                "filesystem",
-                ["npx", "-y", "@modelcontextprotocol/server-filesystem", os.environ.get("MCP_FS_DIR", ".")],
-            ))
-        filesystem_ready = False
+        candidates = [
+            ("echo", [sys.executable, str(ROOT / "mcp/echo_server.py")]),
+            ("calc", [sys.executable, str(ROOT / "mcp/calc_server.py")]),
+        ]
         for name, command in candidates:
             client = MCPClient(command, name=name)
             try:
                 client.start()
                 register_mcp_tools(self.base_registry, client)
                 self._mcp_clients.append(client)
-                filesystem_ready = filesystem_ready or name == "filesystem"
-                self._emit("notice", level="info", message=f"MCP {name} 已接入")
-            except Exception as exc:
+            except Exception:
                 client.close()
-                self._emit("notice", level="warning", message=f"MCP {name} 未接入：{exc}")
-        if not filesystem_ready:
-            client = MCPClient([sys.executable, str(ROOT / "mcp/calc_server.py")], name="calc")
-            try:
-                client.start()
-                register_mcp_tools(self.base_registry, client)
-                self._mcp_clients.append(client)
-                self._emit("notice", level="info", message="MCP calc 已接入")
-            except Exception as exc:
-                client.close()
-                self._emit("notice", level="warning", message=f"MCP calc 未接入：{exc}")
 
     def _backend_for(self, image_paths: tuple[str, ...]) -> Any:
         if not image_paths:

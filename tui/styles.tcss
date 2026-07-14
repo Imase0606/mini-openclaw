@@ -138,6 +138,18 @@ AssistantMessage Markdown {
     background: #0b0d0e;
 }
 
+.assistant-actions {
+    width: 1fr;
+    height: 3;
+    align: right middle;
+}
+
+.assistant-actions .copy-response {
+    width: 8;
+    min-width: 8;
+    height: 3;
+}
+
 .activity-line {
     height: auto;
     margin: 1 0 0 0;
@@ -159,6 +171,15 @@ ToolCallCard.tool-done {
 
 ToolCallCard.tool-denied, ToolCallCard.tool-error {
     border-left: solid #c76866;
+}
+
+ToolCallCard.tool-retrying {
+    border-left: solid #c4a75a;
+}
+
+ToolCallCard.tool-recovered {
+    border-left: solid #4f9d73;
+    color: #90969b;
 }
 
 .tool-details {
@@ -305,7 +326,7 @@ PromptInput:focus {
     text-align: right;
 }
 
-PermissionModal, ChoiceModal {
+PermissionModal, ChoiceModal, ArtifactPreviewModal {
     align: center middle;
     background: #000000 65%;
 }
@@ -397,6 +418,75 @@ PermissionModal, ChoiceModal {
 #choice-options > .option-list--option-highlighted {
     color: #0b0d0e;
     background: #ff928b;
+}
+
+#artifact-preview-dialog {
+    width: 90%;
+    max-width: 140;
+    height: 90%;
+    min-width: 30;
+    padding: 0 1 1 1;
+    color: #e7e2dc;
+    background: #111314;
+    border: round #d87875;
+}
+
+#artifact-preview-header {
+    height: 3;
+    border-bottom: solid #6b4141;
+}
+
+#artifact-preview-title {
+    width: 1fr;
+    height: 2;
+    padding: 1 1 0 1;
+    color: #ff928b;
+    text-style: bold;
+    text-overflow: ellipsis;
+}
+
+#artifact-preview-close {
+    width: 5;
+    min-width: 5;
+    height: 3;
+}
+
+#artifact-preview-body {
+    height: 1fr;
+    padding: 1;
+    background: #0b0d0e;
+    scrollbar-color: #51565b;
+    scrollbar-color-hover: #6b7278;
+    scrollbar-color-active: #ff928b;
+}
+
+#artifact-preview-markdown, #artifact-preview-text,
+#artifact-preview-image, #artifact-preview-details {
+    width: 1fr;
+    height: auto;
+}
+
+#artifact-preview-image {
+    content-align: center top;
+}
+
+#artifact-preview-details {
+    margin-top: 1;
+    padding: 1;
+    color: #d9d5d0;
+    background: #111314;
+}
+
+#artifact-preview-actions {
+    height: 3;
+    align: center middle;
+}
+
+#artifact-preview-actions Button {
+    width: 7;
+    min-width: 7;
+    height: 3;
+    margin: 0 1;
 }
 
 .narrow #workspace {

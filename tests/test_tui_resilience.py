@@ -235,6 +235,24 @@ class TUIResilienceTests(unittest.IsolatedAsyncioTestCase):
     def test_arbitrary_selection_is_disabled_for_streaming_markdown(self):
         self.assertFalse(MiniOpenClawApp.ALLOW_SELECT)
 
+    async def test_ctrl_c_still_interrupts_active_worker(self):
+        class Worker:
+            def __init__(self) -> None:
+                self.cancelled = False
+
+            def cancel(self) -> None:
+                self.cancelled = True
+
+        app = MiniOpenClawApp(self.runtime_factory)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            worker = Worker()
+            screen.worker = worker
+            screen.busy = True
+            await pilot.press("ctrl+c")
+            self.assertTrue(worker.cancelled)
+
     async def test_malformed_tool_output_is_rendered_as_plain_text(self):
         app = MiniOpenClawApp(self.runtime_factory)
         async with app.run_test(size=(120, 40)) as pilot:

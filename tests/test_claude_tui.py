@@ -22,7 +22,7 @@ from backend.client import DeepSeekBackend
 from tui.app import MiniOpenClawApp
 from tui.chat_view import ActivityLine, AssistantMessage, WelcomePanel
 from tui.composer import Composer
-from tui.completion import CompletionMenu
+from tui.completion import CompletionMenu, workspace_files
 from tui.input_area import PromptInput
 from tui.modals import BilibiliLoginModal
 from tui.screens import MainScreen
@@ -114,17 +114,29 @@ class RuntimeExtensionTests(unittest.TestCase):
         runtime.close()
         self.assertTrue(backend.closed)
 
-    def test_mcp_silently_skips_optional_filesystem_without_npx(self):
+    def test_workspace_files_handles_missing_stdout(self):
+        result = SimpleNamespace(stdout=None)
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tui.completion.subprocess.run", return_value=result
+        ):
+            self.assertEqual(workspace_files(Path(tmp)), [])
+
+    def test_mcp_starts_only_echo_and_calc_without_notices(self):
         events = []
         runtime = AgentRuntime(trace_enabled=False, enable_mcp=True, event_sink=events.append)
         try:
-            with patch("agent.runtime.shutil.which", return_value=None):
+            with patch("tools.mcp_client.MCPClient") as client_class, patch(
+                "tools.mcp_client.register_mcp_tools"
+            ):
                 runtime._ensure_mcp()
-            names = runtime.base_registry.names()
+            candidates = [
+                (call.args[0], call.kwargs["name"])
+                for call in client_class.call_args_list
+            ]
             notices = [event.data for event in events if event.kind == "notice"]
-            self.assertIn("mcp__echo", names)
-            self.assertIn("mcp__add", names)
-            self.assertFalse(any("filesystem" in item.get("message", "") for item in notices))
+            self.assertEqual([name for _command, name in candidates], ["echo", "calc"])
+            self.assertFalse(any(command[0] == "npx" for command, _name in candidates))
+            self.assertEqual(notices, [])
         finally:
             runtime.close()
 
@@ -356,6 +368,56 @@ class ClaudeStyleTUITests(unittest.IsolatedAsyncioTestCase):
             screen._set_activity("completed")
             self.assertFalse(activity.display)
 
+    async def test_completed_response_copy_button_preserves_markdown(self):
+        app = MiniOpenClawApp(self.runtime_factory)
+        async with app.run_test(size=(60, 30)) as pilot:
+            await pilot.pause()
+            chat = app.screen.query_one("ChatContainer")
+            message = await chat.add_assistant_message()
+            markdown = "# 中文标题\n\n```python\nprint('hello')\n```\n"
+            await message.append_token(markdown)
+            actions = message.query_one(".assistant-actions")
+            self.assertFalse(actions.display)
+
+            await message.finalize()
+            await pilot.pause()
+            self.assertTrue(actions.display)
+            button = message.query_one(".copy-response")
+            self.assertLessEqual(button.region.right, message.region.right)
+            button.press()
+            await pilot.pause()
+            self.assertEqual(app.clipboard, markdown)
+
+    async def test_copy_command_uses_latest_completed_response(self):
+        app = MiniOpenClawApp(self.runtime_factory)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            chat = screen.query_one("ChatContainer")
+            first = await chat.add_assistant_message()
+            await first.append_token("first")
+            await first.finalize()
+            second = await chat.add_assistant_message()
+            await second.append_token("**second**")
+            await second.finalize()
+
+            await screen._handle_command("/copy")
+            self.assertEqual(app.clipboard, "**second**")
+            await screen._handle_command("/copy extra")
+            self.assertEqual(app.clipboard, "**second**")
+
+    async def test_empty_response_cannot_be_copied(self):
+        app = MiniOpenClawApp(self.runtime_factory)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            message = await screen.query_one("ChatContainer").add_assistant_message()
+            await message.finalize()
+            self.assertFalse(message.query_one(".assistant-actions").display)
+            self.assertFalse(message.copy_content())
+            await screen._handle_command("/copy")
+            self.assertEqual(app.clipboard, "")
+
     async def test_tool_card_stays_above_activity_line(self):
         app = MiniOpenClawApp(self.runtime_factory)
         async with app.run_test(size=(120, 40)) as pilot:
@@ -369,10 +431,82 @@ class ClaudeStyleTUITests(unittest.IsolatedAsyncioTestCase):
             ))
             await pilot.pause()
             children = list(message.children)
+            actions = message.query_one(".assistant-actions")
+            activity = message.query_one(ActivityLine)
             self.assertLess(
                 children.index(screen.tool_cards["call-order"]),
-                children.index(message.query_one(ActivityLine)),
+                children.index(actions),
             )
+            self.assertLess(children.index(actions), children.index(activity))
+            self.assertIs(children[-1], activity)
+
+    async def test_kb_parameter_retry_card_recovers_after_success(self):
+        app = MiniOpenClawApp(self.runtime_factory)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            await screen._dispatch_agent_event(AgentEvent(
+                "tool_started",
+                {"call_id": "kb-bad", "name": "kb_write", "arguments": {}},
+            ))
+            await screen._dispatch_agent_event(AgentEvent(
+                "tool_finished",
+                {
+                    "call_id": "kb-bad",
+                    "name": "kb_write",
+                    "status": "error",
+                    "result": "[参数层] JSON 解析失败",
+                    "duration_ms": 10,
+                },
+            ))
+            retry = screen.tool_cards["kb-bad"]
+            self.assertEqual(retry.status, "retrying")
+            self.assertIn("[retry]", str(retry.title))
+            self.assertTrue(retry.collapsed)
+
+            await screen._dispatch_agent_event(AgentEvent(
+                "tool_started",
+                {"call_id": "kb-ok", "name": "kb_write", "arguments": {"source_url": "BV1"}},
+            ))
+            await screen._dispatch_agent_event(AgentEvent(
+                "tool_finished",
+                {
+                    "call_id": "kb-ok",
+                    "name": "kb_write",
+                    "status": "done",
+                    "result": '{"ok": true}',
+                    "duration_ms": 20,
+                },
+            ))
+            self.assertEqual(retry.status, "recovered")
+            self.assertIn("[recovered]", str(retry.title))
+            self.assertEqual(screen.tool_cards["kb-ok"].status, "done")
+
+    async def test_unrecovered_parameter_retry_becomes_final_error(self):
+        app = MiniOpenClawApp(self.runtime_factory)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            await screen._dispatch_agent_event(AgentEvent(
+                "tool_started",
+                {"call_id": "kb-final", "name": "kb_write", "arguments": {}},
+            ))
+            await screen._dispatch_agent_event(AgentEvent(
+                "tool_finished",
+                {
+                    "call_id": "kb-final",
+                    "name": "kb_write",
+                    "status": "error",
+                    "result": "[参数层] JSON 解析失败",
+                    "duration_ms": 10,
+                },
+            ))
+            await screen._dispatch_agent_event(AgentEvent(
+                "run_finished", {"status": "error", "content": ""}
+            ))
+            card = screen.tool_cards["kb-final"]
+            self.assertEqual(card.status, "error")
+            self.assertIn("[error]", str(card.title))
 
     async def test_busy_input_queues_and_runs_in_order(self):
         app = MiniOpenClawApp(self.runtime_factory)

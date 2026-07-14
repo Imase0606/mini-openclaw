@@ -7,15 +7,23 @@ import subprocess
 from pathlib import Path
 
 
-def open_artifact(path: str, root: Path | None = None) -> tuple[bool, str]:
+def resolve_artifact(path: str, root: Path | None = None) -> Path:
     workspace = (root or Path.cwd()).resolve()
     candidate = (workspace / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
     try:
         candidate.relative_to(workspace)
     except ValueError:
-        return False, "refused to open a file outside the workspace"
+        raise ValueError("refused to open a file outside the workspace") from None
     if not candidate.is_file():
-        return False, f"file does not exist: {candidate}"
+        raise FileNotFoundError(f"file does not exist: {candidate}")
+    return candidate
+
+
+def open_artifact(path: str, root: Path | None = None) -> tuple[bool, str]:
+    try:
+        candidate = resolve_artifact(path, root)
+    except (OSError, ValueError) as exc:
+        return False, str(exc)
     try:
         if os.name == "nt":
             os.startfile(candidate)  # type: ignore[attr-defined]

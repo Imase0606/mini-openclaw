@@ -25,7 +25,7 @@ VISUAL_METADATA_KEYS = {
     "visual_parts_sampled", "visual_analyzed_at", "visual_strategy_version",
     "visual_notes_path", "visual_contact_sheet_path", "visual_frames_dir",
 }
-VISUAL_STRATEGY_VERSION = 1
+VISUAL_STRATEGY_VERSION = 2
 VIDEO_TYPES = {"tutorial", "knowledge", "narrative", "commentary", "general"}
 VIDEO_TYPE_LABELS = {
     "tutorial": "教程/操作演示",
@@ -826,7 +826,7 @@ def _transcribe(
 
 
 def _visual_sample_plan(pages: list[dict[str, Any]]) -> list[dict[str, int]]:
-    """Allocate a bounded visual budget while preserving multipart coverage."""
+    """Allocate a duration-aware visual budget while preserving multipart coverage."""
     normalized = [
         {"page": int(page.get("page") or index), "duration": max(1, int(page.get("duration") or 1))}
         for index, page in enumerate(pages or [{}], start=1)
@@ -849,12 +849,11 @@ def _visual_sample_plan(pages: list[dict[str, Any]]) -> list[dict[str, int]]:
             selected.append({**page, "samples": 2})
             selected_pages.add(page["page"])
         return sorted(selected, key=lambda page: page["page"])
-    if len(normalized) >= 7:
-        return [{**page, "samples": 2} for page in normalized]
 
     allocations = [2] * len(normalized)
-    remaining = 12 - sum(allocations)
     weights = [page["duration"] for page in normalized]
+    budget = min(24, max(12, math.ceil(sum(weights) / 30), sum(allocations)))
+    remaining = budget - sum(allocations)
     while remaining > 0:
         index = max(range(len(normalized)), key=lambda item: weights[item] / (allocations[item] + 1))
         allocations[index] += 1
@@ -877,32 +876,72 @@ def _image_dhash(path: Path) -> tuple[int, tuple[int, int, int]]:
     return value, color_mean
 
 
-def _select_distinct_frames(candidates: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+def _select_distinct_frames(
+    candidates: list[dict[str, Any]],
+    limit: int,
+    *,
+    duration: float | None = None,
+) -> list[dict[str, Any]]:
+    if not candidates or limit <= 0:
+        return []
     selected: list[dict[str, Any]] = []
     hashes: list[tuple[int, tuple[int, int, int]]] = []
-    scene = sorted((item for item in candidates if item.get("kind") == "scene"), key=lambda item: item["time"])
-    uniform = sorted((item for item in candidates if item.get("kind") != "scene"), key=lambda item: item["time"])
-    ordered: list[dict[str, Any]] = []
-    for index in range(max(len(scene), len(uniform))):
-        if index < len(uniform):
-            ordered.append(uniform[index])
-        if index < len(scene):
-            ordered.append(scene[index])
-    for candidate in ordered:
+    used_paths: set[str] = set()
+    span = max(
+        float(duration or 0),
+        max(float(item.get("time") or 0) for item in candidates),
+        1.0,
+    )
+    buckets: list[list[dict[str, Any]]] = [[] for _ in range(limit)]
+    for candidate in candidates:
+        timestamp = max(0.0, float(candidate.get("time") or 0))
+        bucket = min(limit - 1, int(timestamp * limit / span))
+        buckets[bucket].append(candidate)
+
+    def add_if_distinct(candidate: dict[str, Any]) -> bool:
+        path = str(candidate["path"])
+        if path in used_paths:
+            return False
+        used_paths.add(path)
         try:
             frame_hash = _image_dhash(Path(candidate["path"]))
         except OSError:
-            continue
+            return False
         if any(
             (frame_hash[0] ^ existing[0]).bit_count() < 6
             and max(abs(frame_hash[1][channel] - existing[1][channel]) for channel in range(3)) < 16
             for existing in hashes
         ):
-            continue
+            return False
         selected.append(candidate)
         hashes.append(frame_hash)
-        if len(selected) >= limit:
-            break
+        return True
+
+    for index, bucket in enumerate(buckets):
+        target = (index + 0.5) * span / limit
+        ordered = sorted(
+            bucket,
+            key=lambda item: (
+                abs(float(item.get("time") or 0) - target),
+                item.get("kind") != "scene",
+            ),
+        )
+        for candidate in ordered:
+            if add_if_distinct(candidate):
+                break
+
+    if len(selected) < limit:
+        remaining = [item for item in candidates if str(item["path"]) not in used_paths]
+        remaining.sort(
+            key=lambda item: min(
+                abs(float(item.get("time") or 0) - float(chosen.get("time") or 0))
+                for chosen in selected
+            ) if selected else span,
+            reverse=True,
+        )
+        for candidate in remaining:
+            if add_if_distinct(candidate) and len(selected) >= limit:
+                break
     return sorted(selected, key=lambda item: item.get("time", 0))
 
 
@@ -942,7 +981,7 @@ def _extract_part_frames(
         })
     for index, path in enumerate(sorted(candidate_dir.glob("uniform_*.jpg"))):
         candidates.append({"path": path, "page": page, "time": index * interval, "kind": "uniform"})
-    selected = _select_distinct_frames(candidates, samples)
+    selected = _select_distinct_frames(candidates, samples, duration=duration)
     persisted: list[dict[str, Any]] = []
     for index, candidate in enumerate(sorted(selected, key=lambda item: item["time"]), start=1):
         destination = output_dir / f"frame_{index:03d}.jpg"
@@ -1323,6 +1362,27 @@ def _chunk_text(
     )
 
 
+def _normalize_kb_note(
+    value: Any,
+    field_name: str,
+    *,
+    allow_list: bool = False,
+) -> tuple[str, str]:
+    if value is None or value == "":
+        return "", ""
+    if isinstance(value, str):
+        text = value.strip()
+    elif allow_list and isinstance(value, list):
+        if not all(isinstance(item, str) for item in value):
+            raise ValueError(f"{field_name} 数组中的每一项都必须是字符串")
+        items = [item.strip() for item in value if item.strip()]
+        text = "\n".join(f"- {item}" for item in items)
+    else:
+        expected = "字符串或字符串数组" if allow_list else "字符串"
+        raise ValueError(f"{field_name} 必须是{expected}")
+    return _to_simplified(text)
+
+
 def _kb_write(
     title: str = "",
     source_url: str = "",
@@ -1334,11 +1394,11 @@ def _kb_write(
     metadata_path: str = "",
     summary: str = "",
     content_digest: str = "",
-    key_points: str = "",
+    key_points: str | list[str] = "",
     section_notes: str = "",
     action_suggestions: str = "",
     video_type: str = "general",
-    sections: dict[str, Any] | None = None,
+    sections: dict[str, str | list[str]] | None = None,
 ) -> str:
     if not source_url:
         return "[错误] kb_write 缺少必需参数 source_url"
@@ -1384,20 +1444,30 @@ def _kb_write(
     for warning in (transcript_warning, visual_warning):
         if warning and warning not in normalize_warnings:
             normalize_warnings.append(warning)
-    summary, summary_warning = _to_simplified(summary)
-    content_digest, digest_warning = _to_simplified(content_digest)
-    key_points, key_points_warning = _to_simplified(key_points)
-    section_notes, notes_warning = _to_simplified(section_notes)
-    action_suggestions, action_warning = _to_simplified(action_suggestions)
-    normalized_sections: dict[str, str] = {}
-    if isinstance(sections, dict):
-        for key, value in sections.items():
-            if not isinstance(value, str) or not value.strip():
+    try:
+        summary, summary_warning = _normalize_kb_note(summary, "summary")
+        content_digest, digest_warning = _normalize_kb_note(content_digest, "content_digest")
+        key_points, key_points_warning = _normalize_kb_note(
+            key_points, "key_points", allow_list=True
+        )
+        section_notes, notes_warning = _normalize_kb_note(section_notes, "section_notes")
+        action_suggestions, action_warning = _normalize_kb_note(
+            action_suggestions, "action_suggestions"
+        )
+        if sections is not None and not isinstance(sections, dict):
+            raise ValueError("sections 必须是 JSON 对象")
+        normalized_sections: dict[str, str] = {}
+        for key, value in (sections or {}).items():
+            normalized_value, section_warning = _normalize_kb_note(
+                value, f"sections.{key}", allow_list=True
+            )
+            if not normalized_value:
                 continue
-            normalized_value, section_warning = _to_simplified(value.strip())
             normalized_sections[str(key)] = normalized_value
             if section_warning and section_warning not in normalize_warnings:
                 normalize_warnings.append(section_warning)
+    except ValueError as exc:
+        return f"[错误][参数层] kb_write 参数 {exc}"
     for warning in (
         title_warning,
         summary_warning,
@@ -1627,14 +1697,14 @@ video_transcribe_tool = Tool(
 
 video_frame_ocr_tool = Tool(
     "video_frame_ocr",
-    "自动抽取 B站公开视频关键帧，优先用 MiMo V2.5 分析文字、PPT、代码、图表和界面，失败时降级 EasyOCR。",
+    "按视频时长从完整时间轴抽取 B站公开视频关键帧，优先用 MiMo V2.5 分析文字、PPT、代码、图表和界面，失败时降级 EasyOCR。",
     {
         "type": "object",
         "properties": {
             "url": {"type": "string"},
             "interval_seconds": {
                 "type": "integer", "default": 15,
-                "description": "兼容旧调用；当前版本按分P和场景自适应抽帧。",
+                "description": "兼容旧调用；当前版本按视频时长、分P和完整时间轴自适应抽帧。",
             },
             "timeout": {"type": "integer", "default": 900},
             "force": {"type": "boolean", "default": False, "description": "忽略已有视觉终态并重新抽帧分析。"},
@@ -1660,7 +1730,13 @@ kb_write_tool = Tool(
             "metadata_path": {"type": "string"},
             "summary": {"type": "string", "description": "兼容旧参数；建议改用 content_digest。"},
             "content_digest": {"type": "string", "description": "1-3 个自然段，通常 150-400 字的视频内容提要。"},
-            "key_points": {"type": "string", "description": "面向人类学习笔记的核心要点。"},
+            "key_points": {
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}},
+                ],
+                "description": "核心要点；优先使用简短字符串数组，或传入 Markdown 字符串。",
+            },
             "section_notes": {"type": "string", "description": "按时间或主题段落整理的视频脉络。"},
             "action_suggestions": {"type": "string", "description": "仅在视频包含教程/方法论/可执行建议时填写。"},
             "video_type": {
@@ -1671,8 +1747,13 @@ kb_write_tool = Tool(
             },
             "sections": {
                 "type": "object",
-                "description": "按 video_type 填写对应结构字段，空字段不要传入。",
-                "additionalProperties": {"type": "string"},
+                "description": "按 video_type 填写对应结构字段；每个值使用字符串或简短字符串数组。",
+                "additionalProperties": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                },
             },
         },
         "required": ["source_url"],

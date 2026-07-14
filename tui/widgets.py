@@ -13,6 +13,9 @@ class ToolCallCard(Collapsible):
         self.call_id = call_id
         self.tool_name = name
         self.arguments = arguments
+        self.status = "running"
+        self.result = ""
+        self.duration_ms = 0
         details = Vertical(
             Static(
                 json.dumps(self.arguments, ensure_ascii=False, indent=2),
@@ -30,16 +33,31 @@ class ToolCallCard(Collapsible):
         )
 
     def finish(self, status: str, result: str, duration_ms: int) -> None:
-        mark = {"done": "[ok]", "denied": "[denied]", "error": "[error]"}.get(status, "[ ]")
-        for state in ("done", "denied", "error"):
+        self.status = status
+        self.result = result
+        self.duration_ms = duration_ms
+        mark = {
+            "done": "[ok]",
+            "denied": "[denied]",
+            "error": "[error]",
+            "retrying": "[retry]",
+            "recovered": "[recovered]",
+        }.get(status, "[ ]")
+        for state in ("done", "denied", "error", "retrying", "recovered"):
             self.remove_class(f"tool-{state}")
-        if status in {"done", "denied", "error"}:
+        if status in {"done", "denied", "error", "retrying", "recovered"}:
             self.add_class(f"tool-{status}")
+        if status in {"retrying", "recovered"}:
+            self.collapsed = True
         visual_summary = self._visual_summary(result) if self.tool_name == "video_frame_ocr" else ""
         self.title = Content(
             f"{mark} {self.tool_name}{self._summary(self.arguments)}{visual_summary}  {duration_ms}ms"
         )
         self.query_one(".tool-result", Static).update(result[:3000])
+
+    def recover(self) -> None:
+        if self.status == "retrying":
+            self.finish("recovered", self.result, self.duration_ms)
 
     @staticmethod
     def _visual_summary(result: str) -> str:

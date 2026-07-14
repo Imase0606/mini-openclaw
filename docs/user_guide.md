@@ -28,13 +28,6 @@ pip install -r requirements-ocr.txt
 
 `requirements.txt` 会通过 `-e .` 安装项目自身，因此自动部署也会注册 `mini-openclaw` 命令。课程部署包内置 `models/faster-whisper-base`；根目录 `Dockerfile` 会校验模型完整性和命令入口。运行时通过 `FASTER_WHISPER_MODEL_PATH` 使用本地模型，构建期和运行期都不需要连接 Hugging Face。在平台交互终端中可运行 `mini-openclaw`，也可使用 `python -m tui`；Textual 界面必须连接 TTY，不能直接通过普通 HTTP 地址显示。
 
-filesystem MCP 是可选组件。需要使用时确认 WSL 指向 Linux `npx`；课程容器未安装 npx 时会静默跳过，并继续使用内置文件工具：
-
-```bash
-which npx
-npx --version
-```
-
 ## 2. 配置模型
 
 将密钥写入 WSL 的 `~/.zshrc`，不要写入仓库文件：
@@ -47,8 +40,6 @@ export DEEPSEEK_MODEL="deepseek-chat"
 export VISION_API_KEY="your-mimo-key"
 export VISION_BASE_URL="https://api.xiaomimimo.com/v1"
 export VISION_MODEL="mimo-v2.5"
-
-export MCP_FS_DIR="/mnt/d/develop/aiFrontierPractice/mini-openclaw"
 ```
 
 重新加载配置并检查：
@@ -80,6 +71,8 @@ python -m tui
 
 欢迎页使用 `VIDEO + KB` 终端标识，并根据宽度自动适配双栏、窄屏和紧凑布局。
 
+每条非空回答完成后会显示 `Copy` 按钮，用于复制保留标题、列表、链接和代码围栏的原始 Markdown；也可以输入 `/copy` 复制最近一条已完成回答。
+
 直接输入自然语言并按 Enter 提交。任务运行时仍可输入，新消息会进入队列。
 
 常用快捷键：
@@ -105,6 +98,7 @@ python -m tui
 | `/bilibili-login`、`/bilibili-status`、`/bilibili-logout` | 扫码登录、检查或清除内置字幕会话 |
 | `/image <路径>` | 为下一条消息添加图片 |
 | `/trace`、`/cost` | 查看 trace、token 和成本摘要 |
+| `/copy` | 复制最近一条已完成回答的原始 Markdown |
 | `/open <n>` | 打开第 n 个已记录产物 |
 | `!command` | 经权限策略和沙箱确认后直接运行 Shell 命令 |
 
@@ -166,9 +160,9 @@ knowledge_base/<BV>/
 
 其中 `index.md` 是主要阅读入口，`chunks.jsonl` 用于后续 RAG。登录态只用于公开 视频的字幕接口，音频和视频流仍匿名获取；不绕过会员、私密、地区或平台访问限制。
 
-视频提炼会自动执行一次视觉探测，不再仅凭字幕判断是否需要 OCR。单视频默认分析 12 帧；7–12 个分 P 时每 P 至少 2 帧，最多 24 帧；更多分 P 会按累计时长选择 12 个代表分 P。抽帧同时考虑均匀时间点和场景变化，并过滤近重复画面。
+视频提炼会自动执行一次视觉探测，不再仅凭字幕判断是否需要 OCR。视觉预算最少 12 帧，视频超过 6 分钟后约每 30 秒增加 1 帧，最多 24 帧；多分 P 时每个选中分 P 至少 2 帧，超过 12 个分 P 时按累计时长选择 12 个代表分 P。每个分 P 按完整时间轴分桶，结合均匀时间点和场景变化选择画面，并过滤近重复帧。
 
-配置 `VISION_API_KEY` 后优先使用 `VISION_MODEL`（默认 `mimo-v2.5`）分析文字、PPT、代码、图表和界面；MiMo 未配置或单批失败时降级到 EasyOCR。TUI 的 `video_frame_ocr` 卡片会显示视觉状态、后端、帧数和记录数，Artifacts 中可用 `/open <n>` 打开 `visual_contact_sheet.jpg` 或 `visual_notes.jsonl`。普通重跑复用视觉缓存；明确要求“重新 OCR”时才强制刷新。
+配置 `VISION_API_KEY` 后优先使用 `VISION_MODEL`（默认 `mimo-v2.5`）分析文字、PPT、代码、图表和界面；每次请求最多发送 6 张独立帧图，联系表只用于人工预览，不会作为模型输入。MiMo 未配置或单批失败时降级到 EasyOCR。TUI 的 `video_frame_ocr` 卡片会显示视觉状态、后端、帧数和记录数，Artifacts 中可用 `/open <n>` 在终端内预览 `index.md`、彩色联系表或逐帧视觉笔记；逐帧视图同时显示图片、时间点、OCR 文字、画面描述和置信度，并可用左右方向键切换。普通重跑复用视觉缓存；明确要求“重新 OCR”时才强制刷新。
 
 ### 询问个人视频知识库
 
@@ -284,10 +278,6 @@ python -m agent.cli --replay-trace .mini-openclaw/traces/<run-id>.jsonl
 ### 启动后使用 FakeBackend
 
 当前 shell 没有读取 `DEEPSEEK_API_KEY`。执行 `source ~/.zshrc`，或使用 `zsh -lic` 启动。
-
-### filesystem MCP 启动失败或卡住
-
-filesystem MCP 需要 `npx`。运行 `which npx`；WSL 中应指向 Linux 路径，如 `/usr/bin/npx`，不能指向 `/mnt/c/...` 下的 Windows `npx`。没有 npx 时系统会静默跳过该可选 MCP，文件读写仍使用内置工具。
 
 ### 视频转写很慢
 

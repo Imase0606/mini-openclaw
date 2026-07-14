@@ -4,12 +4,13 @@
 
 `mini-openclaw` 是基于 Textual 的正式交互入口，与 CLI 共用 `agent.runtime.AgentRuntime`。`MainScreen` 只维护界面状态；`AgentWorker` 在线程中调用共享 runtime，并把 `AgentEvent` 投递回 Textual 主循环。
 
-会话会脱敏保存到 `.mini-openclaw/sessions/`，通过 `/resume` 手动恢复。权限支持 `default`、`acceptEdits` 和 `plan`，任何模式都不能覆盖 `deny`。图片通过 `/image <path>` 排队，知识库产物通过 `/open <n>` 显式打开。
+会话会脱敏保存到 `.mini-openclaw/sessions/`，通过 `/resume` 手动恢复。权限支持 `default`、`acceptEdits` 和 `plan`，任何模式都不能覆盖 `deny`。图片通过 `/image <path>` 排队，知识库产物通过 `/open <n>` 在 TUI 内预览；Markdown 使用原生渲染，图片使用 ANSI 真彩色预览，视觉笔记支持逐帧切换。已完成的回答可通过消息下方的 `Copy` 按钮复制原始 Markdown，`/copy` 可复制最近一条回答。
 
 ## 交互
 
 - `/new`、`/sessions`、`/resume` 管理会话；`/compact` 手动压缩长上下文。
 - `/model` 切换环境变量已配置的模型；`/permissions` 设置权限模式。
+- `/copy` 复制最近一条已完成回答的原始 Markdown。
 - 输入 `/` 或 `@` 获取命令和工作区文件补全；输入 `!command` 直接调用受保护的 Shell。
 - `Ctrl+C` 中断，`Ctrl+D` 退出，`Shift+Tab` 循环权限模式，`Ctrl+B` 展开详情抽屉。
 - 运行中仍可提交请求，最多保留 10 条 FIFO 队列。窄终端会把详情抽屉放到对话区下方。

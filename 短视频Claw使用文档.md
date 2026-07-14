@@ -61,6 +61,8 @@ mini-openclaw
 
 欢迎页使用 `VIDEO + KB` 终端标识，并会根据终端宽度自动切换双栏、窄屏和紧凑布局。
 
+每条非空回答完成后会显示 `Copy` 按钮，用于复制原始 Markdown；也可以输入 `/copy` 复制最近一条已完成回答。
+
 常用命令：
 
 | 命令 | 作用 |
@@ -76,6 +78,7 @@ mini-openclaw
 | `/sessions`、`/resume` | 查看或恢复脱敏会话 |
 | `/trace`、`/cost` | 查看执行轨迹、token 和成本 |
 | `/image <路径>` | 给下一条消息添加图片 |
+| `/copy` | 复制最近一条已完成回答的原始 Markdown |
 | `/open <n>` | 打开第 n 个知识库或视觉产物 |
 
 普通问题可以直接输入，例如：
@@ -101,7 +104,7 @@ mini-openclaw
 3. 当前 Runtime 已扫码时尝试登录字幕。
 4. 没有字幕时返回 ASR 确认，不会静默下载音频。
 5. 用户同意后运行本地 Whisper。
-6. 自动抽取 12–24 张代表帧并执行视觉探测，MiMo 不可用时按批次降级 EasyOCR。
+6. 按视频时长从完整时间轴抽取 12–24 张代表帧并执行视觉探测，MiMo 不可用时按批次降级 EasyOCR。
 7. 内容充足时生成 Markdown、字幕、视觉笔记、联系表、chunks 和 SQLite 索引。
 
 课程网站需要登录字幕时，先在同一个 TUI 输入：
@@ -135,7 +138,7 @@ knowledge_base/<BV>/
 └── assets/frames/pN/
 ```
 
-`index.md` 是主要阅读入口，`chunks.jsonl` 用于 RAG。视觉探测同时使用均匀时间点和场景变化候选帧，并过滤近重复画面。TUI 的 `video_frame_ocr` 卡片会显示状态、后端、帧数和记录数；在 Artifacts 中输入 `/open <n>` 可查看联系表或逐帧视觉笔记。普通重跑复用缓存，明确要求“重新 OCR”才会刷新。
+`index.md` 是主要阅读入口，`chunks.jsonl` 用于 RAG。视觉探测按完整时间轴分桶，同时使用均匀时间点和场景变化候选帧，并过滤近重复画面。MiMo 每批接收最多 6 张独立帧图；联系表只用于人工预览。TUI 的 `video_frame_ocr` 卡片会显示状态、后端、帧数和记录数；在 Artifacts 中输入 `/open <n>` 会直接在终端内渲染 Markdown、彩色联系表或逐帧视觉笔记，逐帧视图可用左右方向键切换。普通重跑复用缓存，明确要求“重新 OCR”才会刷新。
 
 ## 5. 分析图片
 
@@ -250,10 +253,6 @@ ls -lh "$FASTER_WHISPER_MODEL_PATH/model.bin"
 ### 普通聊天使用 FakeBackend
 
 说明 `DEEPSEEK_API_KEY` 未进入当前容器环境。配置环境变量并重新启动部署。
-
-### 提示 filesystem MCP 找不到 npx
-
-最新版会在容器没有 Node.js/npm 时静默跳过可选 filesystem MCP，并继续使用内置文件工具和本地 echo/calc MCP，不显示跳过提示或启动失败。若仍出现 `npx` 相关提示，说明网站运行的是旧部署包。
 
 ### 没有看到 OCR 或视觉分析结果
 

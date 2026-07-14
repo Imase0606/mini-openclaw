@@ -7,7 +7,7 @@
 | A 系统完整性 | `--selfcheck`、启动 TUI | `docs/architecture.md`、各模块 README |
 | B 任务完成 | 现场发现 B1/B2 链接并生成知识库 | `eval.teacher_acceptance --fresh-live` |
 | C 主循环/规划 | `--plan` 展示 Todo、正确终止 | `agent/loop.py`、规划测试 |
-| D MCP/Skills | echo/filesystem MCP 与 `video-summary` 召回 | `mcp/`、`skills/video-summary/` |
+| D MCP/Skills | echo/calc MCP 与 `video-summary` 召回 | `mcp/`、`skills/video-summary/` |
 | D 登录字幕 | 用户扫码后真实内置字幕命中，ASR 调用为 0 | `bilibili_auth`、`bilibili_subtitles` |
 | D 个人知识扩展 | 自然语言检索历次视频并附回看位置 | `kb_search`、`personal-video-knowledge` |
 | E 知识治理 | 展示重复状态、软删除与恢复，确认永久清理受保护 | `kb_catalog`、管理 Skill、治理测试 |
@@ -19,7 +19,7 @@
 ## 上场前 30 分钟
 
 - `which python` 必须指向 `/home/imase/miniconda3/envs/openclaw/bin/python`。
-- 确认 `bwrap --version` 和 `ffmpeg -version` 正常；filesystem MCP 需要 Linux `npx`，未安装时系统应无警告地跳过并使用内置文件工具。
+- 确认 `bwrap --version` 和 `ffmpeg -version` 正常。
 - 确认 DeepSeek/MiMo Key 仅存在于环境变量，并有足够余额。
 - 运行完整 unittest、redteam、默认 demo check 和 `--release` 检查。
 - 运行 `python -m eval.teacher_acceptance --fresh-live`，现场确认知识区 B1 和无可用字幕 B2；缓存样例只作为网络故障后的讲解后备。
