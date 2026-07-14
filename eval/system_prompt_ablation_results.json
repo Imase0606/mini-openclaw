@@ -1,0 +1,101 @@
+[
+  {
+    "mode": "system",
+    "run": 1,
+    "success": true,
+    "outcome": "success",
+    "elapsed_seconds": 6.384,
+    "llm_steps": 3,
+    "tool_steps": 2,
+    "tools_used": [
+      "video_probe",
+      "video_transcribe"
+    ],
+    "total_tokens": 16071,
+    "prompt_tokens": 15734,
+    "completion_tokens": 337,
+    "trace_path": ".mini-openclaw\\eval\\system-ablation-20260714T140455Z\\ablation-system-1.jsonl",
+    "output_excerpt": "视频没有公开字幕，也没有登录态。根据工作流，我需要先建议用户使用 `/bilibili-login` 获取内置字幕，或者询问是否同意使用本地 ASR（Whisper）。\n\n用户您好！这个视频（**OpenAI 正式向公众开放 GPT-5.6 模型系列；Meta 发布 Muse Spark 1.1 模型【AI 早报 2026-07-10】**）目前没有公开字幕，也没有登录态。\n\n要提取视频内容，有两个选择：\n\n1. **推荐方案**：运行 `/bilibili-login` 扫码登录 B站，获取内置字幕（更准确、更快速）\n2. **备选方案**：使用本地 Whisper 语音识别（需要下载音频并运行 ASR，需您确认同意）\n\n请问您希望用哪种方式？"
+  },
+  {
+    "mode": "system",
+    "run": 2,
+    "success": true,
+    "outcome": "success",
+    "elapsed_seconds": 6.839,
+    "llm_steps": 3,
+    "tool_steps": 2,
+    "tools_used": [
+      "video_probe",
+      "video_transcribe"
+    ],
+    "total_tokens": 16074,
+    "prompt_tokens": 15730,
+    "completion_tokens": 344,
+    "trace_path": ".mini-openclaw\\eval\\system-ablation-20260714T140455Z\\ablation-system-2.jsonl",
+    "output_excerpt": "该视频没有公开字幕，也没有登录态。根据工作流，我需要先建议用户使用 `/bilibili-login` 获取内置字幕，或者询问是否同意使用本地 Whisper ASR。\n\n用户您好！这个视频（**OpenAI 正式向公众开放 GPT-5.6 模型系列；Meta 发布 Muse Spark 1.1 模型【AI 早报 2026-07-10】**）目前没有公开字幕可用。\n\n要提取视频内容，有以下两种方式：\n\n1. **使用 B站内置字幕**（推荐）：您可以运行 `/bilibili-login` 扫码登录，登录后我可以获取该视频的内置字幕。\n2. **使用本地语音识别（Whisper）**：如果您同意，我可以下载视频音频并用本地 Whisper 模型进行语音转写。\n\n请问您希望采用哪种方式？或者您先扫码登录试试？"
+  },
+  {
+    "mode": "system",
+    "run": 3,
+    "success": true,
+    "outcome": "success",
+    "elapsed_seconds": 6.738,
+    "llm_steps": 3,
+    "tool_steps": 2,
+    "tools_used": [
+      "video_probe",
+      "video_transcribe"
+    ],
+    "total_tokens": 16094,
+    "prompt_tokens": 15734,
+    "completion_tokens": 360,
+    "trace_path": ".mini-openclaw\\eval\\system-ablation-20260714T140455Z\\ablation-system-3.jsonl",
+    "output_excerpt": "视频没有公开字幕，也没有登录态。根据工作流，我需要先建议用户使用 `/bilibili-login` 获取内置字幕，或者询问是否同意使用本地 ASR（Whisper）进行语音转写。\n\n---\n\n这个视频 **「OpenAI 正式向公众开放 GPT-5.6 模型系列；Meta 发布 Muse Spark 1.1 模型【AI 早报 2026-07-10】」**（UP主：橘鸦Juya，时长 06:08）目前没有公开字幕。\n\n要获取视频内容，有两种方式：\n\n1. **登录获取内置字幕**：运行 `/bilibili-login` 扫码登录后，我可以重新提取 B站内置字幕（推荐，更准确）。\n2. **使用本地语音识别（ASR）**：如果你同意，我可以下载音频并用 Whisper 进行语音转写。需要你确认授权。\n\n请问你希望用哪种方式？"
+  },
+  {
+    "mode": "no-system",
+    "run": 1,
+    "success": false,
+    "outcome": "agent_failure",
+    "elapsed_seconds": 1.748,
+    "llm_steps": 1,
+    "tool_steps": 0,
+    "tools_used": [],
+    "total_tokens": 160,
+    "prompt_tokens": 27,
+    "completion_tokens": 133,
+    "trace_path": ".mini-openclaw\\eval\\system-ablation-20260714T140455Z\\ablation-no-system-1.jsonl",
+    "output_excerpt": "由于我无法直接访问外部链接或实时浏览互联网内容（包括B站视频），因此无法查看你提供的视频具体内容。不过，你可以尝试以下方法自行总结：\n\n1. **观看视频后手动总结**：记录视频的核心观点、关键案例或结论，用几句话概括。\n2. **使用B站自带功能**：部分视频下方有“AI总结”或“笔记”功能，可辅助提取要点。\n3. **提供文字信息**：如果你能描述视频的标题、主题或部分内容，我可以帮你分析或补充总结。\n\n如果需要其他帮助，请告诉我视频的标题或大致内容，我会尽力协助！"
+  },
+  {
+    "mode": "no-system",
+    "run": 2,
+    "success": false,
+    "outcome": "agent_failure",
+    "elapsed_seconds": 2.155,
+    "llm_steps": 1,
+    "tool_steps": 0,
+    "tools_used": [],
+    "total_tokens": 184,
+    "prompt_tokens": 27,
+    "completion_tokens": 157,
+    "trace_path": ".mini-openclaw\\eval\\system-ablation-20260714T140455Z\\ablation-no-system-2.jsonl",
+    "output_excerpt": "由于我无法直接访问外部链接或实时浏览互联网内容（包括B站视频），因此无法查看你提供的视频具体内容。不过，你可以尝试以下方法自行总结：\n\n1. **观看视频后手动总结**：记录视频的核心观点、关键数据、案例或结论，用简洁的语言概括。\n2. **使用B站自带功能**：部分视频下方有“AI总结”或“笔记”功能（需视频作者开启），可辅助提取要点。\n3. **描述视频主题**：如果你能告诉我视频的大致标题、标签或内容方向（例如科技、历史、教程等），我可以帮你推测可能的总结框架或常见分析角度。\n\n如果需要进一步帮助，请提供视频的标题或简要描述，我会尽力为你提供分析思路。"
+  },
+  {
+    "mode": "no-system",
+    "run": 3,
+    "success": false,
+    "outcome": "agent_failure",
+    "elapsed_seconds": 2.245,
+    "llm_steps": 1,
+    "tool_steps": 0,
+    "tools_used": [],
+    "total_tokens": 185,
+    "prompt_tokens": 27,
+    "completion_tokens": 158,
+    "trace_path": ".mini-openclaw\\eval\\system-ablation-20260714T140455Z\\ablation-no-system-3.jsonl",
+    "output_excerpt": "由于我无法直接访问外部链接或观看视频内容，因此无法总结你提供的B站视频（BV1YiNj6nE7n）的具体内容。不过，你可以通过以下方式快速获取视频摘要：\n\n1. **查看视频简介和评论区**：B站视频通常有UP主撰写的简介，以及高赞评论可能包含内容概括。\n2. **使用AI工具辅助**：将视频链接粘贴到支持视频总结的AI工具（如一些浏览器插件或在线服务）中，自动提取字幕并生成摘要。\n3. **手动快进浏览**：快速拖动进度条，关注视频中的标题、图表或关键对话片段。\n\n如果你能提供视频的标题、主题或部分文字内容，我可以帮你进一步分析或总结。"
+  }
+]
