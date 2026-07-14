@@ -12,12 +12,11 @@ WSL: /mnt/d/develop/aiFrontierPractice/mini-openclaw
 Conda environment: openclaw
 Python: /home/imase/miniconda3/envs/openclaw/bin/python
 Branch: master
-Local HEAD: 5a34edec4c626ce48bd7a8e264641513cc6c463b
-origin/master: dbb7caad17d9d373c4a85a98ddb041db5a6d5e80
+Repository status: master synchronized with origin/master at release time
 Remote: https://github.com/Imase0606/mini-openclaw.git
 ```
 
-The local worktree intentionally did not merge the three commits after `5a34ede`. It selectively ports the safe `stdout=None` completion fix. Filesystem MCP was removed from runtime startup because the project uses built-in file tools; the upstream `tools/mcp_client.py` POSIX path rewrite was not ported.
+The three upstream commits after `5a34ede` were merged normally. Their safe `stdout=None` completion fix remains; filesystem MCP startup was removed because the project uses built-in file tools, and the POSIX `/usr/bin/npx` to `npx.cmd` regression was explicitly excluded during conflict resolution.
 
 Important recent commits:
 
@@ -27,6 +26,8 @@ Important recent commits:
 - `5a34ede`: keep TUI activity status below tool cards.
 - `91c3889`: upstream `stdout=None` completion fix, selectively ported.
 - `dee3fd0` / `dbb7caa`: upstream MCP path work, reviewed but not ported; filesystem MCP is no longer started by this project.
+- `89c942b`: TUI artifact preview/copying, `kb_write` recovery, silent local MCP, and full-timeline adaptive visual analysis.
+- `dfa682e`: normal merge of `origin/master` with the reviewed MCP conflict resolution.
 
 ## Implemented Capabilities
 
@@ -98,7 +99,7 @@ Final checks completed on 2026-07-14:
 - `python -m compileall -q agent backend tools tui security eval`: passed.
 - `pip check`: no broken requirements.
 - Wide, narrow, and 60-column compact TUI layouts were snapshot-tested.
-- Local `master` and `origin/master` matched at `5a34ede` after that push; `origin/master` later advanced to `dbb7caa` and the current worktree deliberately remains on `5a34ede` with selected safe changes.
+- Local `master` merged the remote `dbb7caa` history normally and was pushed without force after all release checks passed.
 
 Run validation from WSL `openclaw`; the default Windows Python does not contain the project dependencies.
 
@@ -107,14 +108,14 @@ Run validation from WSL `openclaw`; the default Windows Python does not contain 
 Current local artifact:
 
 ```text
-mini-openclaw-deploy-20260714-linux.zip
-size: 133,606,982 bytes (127.42 MiB)
-SHA256: 8AAD1690C058C378B49DFDA50F2285530F1882FD5227D52F45F9D572938FB1D1
+mini-openclaw-deploy-20260714-web-linux.zip
+source: final pushed master
+SHA256: reported alongside the generated artifact
 ```
 
 It includes source, documentation, and the offline `faster-whisper-base` model. It excludes Git data, API keys, `.mini-openclaw/`, generated knowledge bases, caches, and previous ZIP files.
 
-Important: this ZIP was generated after the npx/logo fixes but before merging teammate commit `c791905` and follow-up `5a34ede`. It remains usable, but a deployment that must exactly match current `master` should regenerate and re-audit the archive in the next session.
+The archive was generated from the final release commit after the remote merge, then audited for required files, forbidden runtime paths, and credential-like content.
 
 ## Repository Hygiene
 
@@ -127,11 +128,10 @@ Important: this ZIP was generated after the npx/logo fixes but before merging te
 
 There are no known blocking code defects. Start by reading this file and checking `git status` plus `git fetch origin`.
 
-Recommended next action only if another website deployment is required:
+Recommended deployment action:
 
-1. Regenerate the Linux deployment ZIP from current `master`.
-2. Verify the bundled Whisper model, latest source, new logo, and silent npx fallback.
-3. Scan the archive for credentials and forbidden runtime paths.
-4. Upload it and run `python -m agent.cli --selfcheck` in the platform terminal.
+1. Upload `mini-openclaw-deploy-20260714-web-linux.zip`.
+2. Configure `DEEPSEEK_API_KEY` and the optional MiMo vision variables in the platform environment.
+3. Run `python -m agent.cli --selfcheck` in the platform terminal.
 
 The deployment ZIP and local runtime artifacts are intentionally ignored and should remain outside Git.
