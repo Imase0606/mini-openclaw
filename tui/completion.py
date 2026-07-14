@@ -87,7 +87,7 @@ def workspace_files(root: Path | None = None, limit: int = 5000) -> list[str]:
     ]
     try:
         result = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=5, check=False)
-        files = result.stdout.splitlines()
+        files = (result.stdout or "").splitlines()
     except (OSError, subprocess.SubprocessError):
         files = [str(path.relative_to(workspace)) for path in workspace.rglob("*") if path.is_file()]
     return sorted(path.replace("\\", "/") for path in files[:limit])
