@@ -362,11 +362,32 @@ class AgentRuntime:
 
         candidates = [("echo", [sys.executable, str(ROOT / "mcp/echo_server.py")])]
         npx_path = shutil.which("npx")
+        # MSYS2/MINGW64 (Git Bash) 下 os.name 为 "posix"，但 npx 路径以 /d/ 等开头，
+        # 不是 /mnt/，所以不会被 WSL 检测拦截。这里放宽条件：只要 npx 能找到就尝试启动。
         npx_usable = bool(npx_path and (os.name == "nt" or not npx_path.startswith("/mnt/")))
         if npx_usable:
+            # 解析 filesystem 目录：优先 MCP_FS_DIR 环境变量，否则使用项目根目录
+            fs_dir_raw = os.environ.get("MCP_FS_DIR", "") or ""
+            if fs_dir_raw:
+                # Windows/Git Bash 下转换 WSL 风格路径（/mnt/d/... → D:/...）
+                # 注意：Git Bash (MSYS2) 中 os.name == "posix"，所以不能仅靠 os.name 判断
+                if fs_dir_raw.startswith("/mnt/") and (os.name == "nt" or sys.platform == "win32"):
+                    parts = fs_dir_raw.replace("\\", "/").strip("/").split("/")
+                    if len(parts) >= 2 and len(parts[1]) == 1:
+                        fs_dir_raw = f"{parts[1].upper()}:/{'/'.join(parts[2:])}"
+                fs_path = str(Path(fs_dir_raw).resolve())
+                if not os.path.isdir(fs_path):
+                    fallback = str(ROOT)
+                    msg = f"MCP_FS_DIR '{fs_path}' 不存在，回退到项目根目录 '{fallback}'"
+                    self._emit("notice", level="warning", message=msg)
+                    if self.event_sink is None:
+                        print(f"[⚠] {msg}", file=sys.stderr)
+                    fs_path = fallback
+            else:
+                fs_path = str(ROOT)
             candidates.append((
                 "filesystem",
-                ["npx", "-y", "@modelcontextprotocol/server-filesystem", os.environ.get("MCP_FS_DIR", ".")],
+                ["npx", "-y", "@modelcontextprotocol/server-filesystem", fs_path],
             ))
         filesystem_ready = False
         for name, command in candidates:
@@ -379,7 +400,10 @@ class AgentRuntime:
                 self._emit("notice", level="info", message=f"MCP {name} 已接入")
             except Exception as exc:
                 client.close()
-                self._emit("notice", level="warning", message=f"MCP {name} 未接入：{exc}")
+                msg = f"MCP {name} 未接入：{exc}"
+                self._emit("notice", level="warning", message=msg)
+                if self.event_sink is None:
+                    print(f"[⚠] {msg}", file=sys.stderr)
         if not filesystem_ready:
             client = MCPClient([sys.executable, str(ROOT / "mcp/calc_server.py")], name="calc")
             try:
@@ -389,7 +413,10 @@ class AgentRuntime:
                 self._emit("notice", level="info", message="MCP calc 已接入")
             except Exception as exc:
                 client.close()
-                self._emit("notice", level="warning", message=f"MCP calc 未接入：{exc}")
+                msg = f"MCP calc 未接入：{exc}"
+                self._emit("notice", level="warning", message=msg)
+                if self.event_sink is None:
+                    print(f"[⚠] {msg}", file=sys.stderr)
 
     def _backend_for(self, image_paths: tuple[str, ...]) -> Any:
         if not image_paths:

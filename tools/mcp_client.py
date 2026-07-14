@@ -64,10 +64,15 @@ class MCPClient:
 
         # 解析命令路径：Windows 上 npx 是 npx.cmd，默认 Popen 找不到
         cmd0 = shutil.which(self.command[0])
-        if os.name != "nt" and self.command[0] == "npx" and cmd0 and cmd0.startswith("/mnt/"):
-            raise MCPError(
-                "WSL 检测到 Windows npx；请安装 Linux Node.js/npm，或调整 PATH 让 Linux npx 优先"
-            )
+        if os.name != "nt" and self.command[0] == "npx" and cmd0:
+            if cmd0.startswith("/mnt/"):
+                raise MCPError(
+                    "WSL 检测到 Windows npx；请安装 Linux Node.js/npm，或调整 PATH 让 Linux npx 优先"
+                )
+            # MSYS2/MINGW64 (Git Bash) 下 shutil.which 返回 /d/... 格式路径，
+            # Windows Popen 不认识这种路径。改用 npx.cmd 让 Windows PATH 解析。
+            if cmd0.startswith("/") and not cmd0.startswith("/mnt/"):
+                cmd0 = "npx.cmd"
         resolved_cmd = [cmd0] + self.command[1:] if cmd0 else self.command
 
         try:
